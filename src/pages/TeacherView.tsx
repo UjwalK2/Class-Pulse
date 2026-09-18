@@ -32,6 +32,7 @@ import {
   RotateCcw,
   Clock,
   HelpCircle,
+  Database,
 } from 'lucide-react';
 import {
   db,
@@ -42,6 +43,7 @@ import {
   serverTimestamp,
   onSnapshot,
   getDocs,
+  currentStorageMode,
 } from '../lib/firebase';
 import { useConfusionSignal } from '../hooks/useConfusionSignal';
 import { generateIntervention, type InterventionResult } from '../lib/gemini';
@@ -393,6 +395,12 @@ export default function TeacherView() {
         </div>
 
         <div className="flex items-center gap-3">
+          <div className="hidden sm:flex items-center gap-1.5 bg-slate-900 border border-slate-800 px-3 py-1.5 rounded-full text-xs font-mono text-slate-400">
+            <Database className="h-3.5 w-3.5 text-indigo-400" />
+            <span>{currentStorageMode === 'firebase' ? 'Firebase Cloud' : 'JSON Server DB'}</span>
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 ml-0.5" />
+          </div>
+
           {roomId && !isSessionEnded && (
             <div className="flex items-center gap-2 bg-slate-900 border border-slate-800 px-3.5 py-1.5 rounded-full text-xs font-medium text-emerald-400">
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />

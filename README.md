@@ -33,9 +33,10 @@ ClassPulse turns silent classroom confusion into a live, anonymous feedback sign
 | Layer | Tech |
 |---|---|
 | Frontend | React (Vite) + Tailwind CSS + Recharts + Lucide Icons |
-| Backend / Data | Firebase Firestore (real-time sync) |
-| AI | Gemini API (structured JSON mode) |
-| Hosting | Firebase Hosting |
+| Backend / Server | Node.js + Express + Server-Sent Events (SSE) |
+| Database | **Zero-Config Local JSON Database** (`data/sessions.json`) or **Optional Firebase Firestore** |
+| AI | Gemini API (server-side proxy `/api/intervention` with topic fallbacks) |
+| Architecture | Full-Stack Client + Server (port 3000) |
 
 ## Screenshots
 
@@ -43,14 +44,29 @@ ClassPulse turns silent classroom confusion into a live, anonymous feedback sign
 ![Student View](./screenshots/student-dashboard.png)
 ![AI Intervention](./screenshots/intervention.png)
 
+## Database & Deployment Modes
+
+This fork is designed for maximum flexibility, especially during **hackathons, live judging, and classroom demos**:
+
+1. **Local Server JSON Mode (Default — Zero-Config)**
+   - No database accounts or cloud API keys required.
+   - All session states, confusion signals, and diagnostic responses persist server-side in `data/sessions.json`.
+   - Real-time cross-device sync is powered by **Server-Sent Events (SSE)**.
+   - Students scanning the QR code on physical mobile phones communicate with the teacher's laptop in real time out of the box.
+   - If `GEMINI_API_KEY` is not provided, the server uses a built-in educational fallback generator for common curriculum topics (recursion, photosynthesis, Newton's laws, binary search, calculus).
+
+2. **Optional Firebase Cloud Mode**
+   - If you prefer cloud-hosted persistence across distributed deployments, set `VITE_STORAGE_MODE=firebase` in `.env` along with your Firebase credentials.
+   - The app seamlessly routes all reads, writes, and real-time listeners through Google Cloud Firestore.
+
 ## How It Works
 
 1. Teacher opens the app and a session QR code is generated instantly.
-2. Students scan the QR code and land directly on the response screen — no setup.
-3. As the lecture goes on, students tap their comprehension level; each signal is written to Firestore in real time.
+2. Students scan the QR code from their mobile devices and land directly on the response screen — no setup or app install.
+3. As the lecture proceeds, students tap their comprehension level; signals sync instantly via SSE or Firestore.
 4. A sliding-window algorithm continuously aggregates the last 60 seconds of responses into a live confusion score.
-5. When confusion crosses the threshold, Gemini generates an analogy + diagnostic question for the exact topic being taught.
-6. The teacher pushes it live; students answer; the teacher instantly sees exactly what's misunderstood and can course-correct on the spot.
+5. When confusion crosses the threshold (>= 50), Gemini AI generates an analogy + targeted A/B diagnostic question for the topic.
+6. The teacher pushes it live to connected student devices with one click, diagnoses the exact misconception, and adjusts the lecture on the spot.
 
 ## Getting Started (Run Locally)
 
@@ -62,26 +78,43 @@ cd Class-Pulse
 # Install dependencies
 npm install
 
-# Set up environment variables
+# (Optional) Set up environment variables
 cp .env.example .env
-# Fill in your Firebase config and Gemini API key in .env
 
-# Run the dev server
+# Run the full-stack server (binds to http://localhost:3000)
 npm run dev
+```
+
+> **Note for Hackathon Demos:** The app runs immediately with **zero configuration** using the default local JSON database!
+
+## Production Build & Start
+
+```bash
+# Build client and bundle backend server
+npm run build
+
+# Launch production server
+npm start
 ```
 
 ## Environment Variables
 
-Create a `.env` file in the root directory with the following (see `.env.example`):
+Create a `.env` file in the root directory (see `.env.example`):
 
-```
+```env
+# Server-side Gemini AI Key (Optional - includes built-in offline educational fallbacks)
+GEMINI_API_KEY=
+
+# Storage Mode: 'json' (default local server database) or 'firebase' (optional cloud sync)
+VITE_STORAGE_MODE=json
+
+# Optional: Firebase configuration (only required if VITE_STORAGE_MODE=firebase)
 VITE_FIREBASE_API_KEY=
 VITE_FIREBASE_AUTH_DOMAIN=
 VITE_FIREBASE_PROJECT_ID=
 VITE_FIREBASE_STORAGE_BUCKET=
 VITE_FIREBASE_MESSAGING_SENDER_ID=
 VITE_FIREBASE_APP_ID=
-VITE_GEMINI_API_KEY=
 ```
 
 

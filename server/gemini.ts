@@ -7,15 +7,6 @@ export interface InterventionResult {
   misconceptionIfWrong?: string;
 }
 
-interface GeminiRawResponse {
-  analogy: string;
-  diagnostic_question: string;
-  option_a: string;
-  option_b: string;
-  correct_option: 'A' | 'B';
-  misconception_if_wrong: string;
-}
-
 const SYSTEM_INSTRUCTION = `You are a rapid-fire teaching assistant embedded in a live classroom tool. A teacher will give you a single topic name. You must instantly return one vivid analogy and one 2-option diagnostic question that targets the single most common student misconception about that topic.
 Rules:
 - The analogy must be concrete, physical, or everyday — something a student can picture in under 3 seconds. No abstract restatements of the definition.
@@ -110,30 +101,13 @@ function getTopicFallback(rawTopic: string): InterventionResult {
   };
 }
 
-export async function generateIntervention(topic: string): Promise<InterventionResult> {
+export async function generateInterventionServer(topic: string): Promise<InterventionResult> {
   const currentTopic = topic.trim() || 'Integration by Parts';
-  const fallbackIntervention = getTopicFallback(currentTopic);
+  const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
+  const fallback = getTopicFallback(currentTopic);
 
-  // 1. Try server-side Gemini API route first (keeps secret key secure on server)
-  try {
-    const res = await fetch('/api/intervention', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ topic: currentTopic }),
-    });
-    if (res.ok) {
-      const data = await res.json();
-      if (data && data.analogy && data.diagnosticQuestion) {
-        return data as InterventionResult;
-      }
-    }
-  } catch {
-    // Fall through to client direct or fallback
-  }
-
-  const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
   if (!apiKey || apiKey.trim() === '') {
-    return fallbackIntervention;
+    return fallback;
   }
 
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
@@ -155,16 +129,13 @@ export async function generateIntervention(topic: string): Promise<InterventionR
     },
   };
 
-  // Add timeout controller for low-latency reliability
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 8000);
 
   try {
     const response = await fetch(endpoint, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(requestBody),
       signal: controller.signal,
     });
@@ -177,19 +148,12 @@ export async function generateIntervention(topic: string): Promise<InterventionR
 
     const data = await response.json();
     const candidateText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-
     if (!candidateText) {
       throw new Error('No candidate text received from Gemini API');
     }
 
-    const parsed: GeminiRawResponse = JSON.parse(candidateText);
-
-    if (
-      parsed.analogy &&
-      parsed.diagnostic_question &&
-      parsed.option_a &&
-      parsed.option_b
-    ) {
+    const parsed = JSON.parse(candidateText);
+    if (parsed.analogy && parsed.diagnostic_question && parsed.option_a && parsed.option_b) {
       return {
         analogy: parsed.analogy,
         diagnosticQuestion: parsed.diagnostic_question,
@@ -199,11 +163,10 @@ export async function generateIntervention(topic: string): Promise<InterventionR
         misconceptionIfWrong: parsed.misconception_if_wrong,
       };
     }
-
-    throw new Error('Parsed response missing required schema fields');
-  } catch (error) {
+    return fallback;
+  } catch (err) {
     clearTimeout(timeoutId);
-    console.error('generateIntervention API call failed, using safe fallback:', error);
-    return fallbackIntervention;
+    console.warn('[Gemini Server] API request failed, using fallback:', err);
+    return fallback;
   }
 }
