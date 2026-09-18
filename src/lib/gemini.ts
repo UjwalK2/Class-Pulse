@@ -46,19 +46,74 @@ const RESPONSE_SCHEMA = {
   ],
 };
 
+function getTopicFallback(rawTopic: string): InterventionResult {
+  const topic = rawTopic.trim().toLowerCase();
+  if (topic.includes('recursion')) {
+    return {
+      analogy: 'Recursion is like Russian nesting dolls: you keep opening smaller dolls until you hit the solid baby doll (the base case).',
+      diagnosticQuestion: 'What must happen in every recursive call to avoid an infinite loop?',
+      optionA: 'The problem must get closer to the base case',
+      optionB: 'The function must invoke itself with identical arguments',
+      correctOption: 'A',
+      misconceptionIfWrong: 'Students think recursive calls simply loop, forgetting each step must strictly advance toward the termination boundary.',
+    };
+  }
+  if (topic.includes('photo') || topic.includes('plant')) {
+    return {
+      analogy: 'Photosynthesis is like a solar-powered bakery: sunlight powers the mixer that turns water and air (CO₂) into sugar loaves.',
+      diagnosticQuestion: 'Where does the mass of a mature plant primarily come from?',
+      optionA: 'From soil minerals and fertilizers absorbed by roots',
+      optionB: 'From carbon dioxide gas captured from the air',
+      correctOption: 'B',
+      misconceptionIfWrong: 'Students commonly believe plant bulk comes from soil rather than carbon captured from surrounding air.',
+    };
+  }
+  if (topic.includes('newton') || topic.includes('force') || topic.includes('gravity')) {
+    return {
+      analogy: "Newton's Third Law is like stepping off a floating skateboard: as you push forward onto the pavement, you kick the board backward with equal force.",
+      diagnosticQuestion: 'When a large truck hits a small mosquito, which experiences the greater collision force?',
+      optionA: 'The truck and the mosquito exert exactly equal forces on each other',
+      optionB: 'The heavy truck exerts a vastly larger impact force on the mosquito',
+      correctOption: 'A',
+      misconceptionIfWrong: 'Students conflate resulting damage or acceleration with the mutual contact force, which is identical in magnitude.',
+    };
+  }
+  if (topic.includes('binary') || topic.includes('search') || topic.includes('tree')) {
+    return {
+      analogy: 'Binary search is like guessing a mystery page in a dictionary: you flip to the middle and immediately discard the unneeded half.',
+      diagnosticQuestion: 'What strict precondition is necessary before running binary search?',
+      optionA: 'The array must be uniquely indexed but can be unordered',
+      optionB: 'The elements in the array must be sorted in order',
+      correctOption: 'B',
+      misconceptionIfWrong: 'Students often assume binary search works on any collection, forgetting it relies completely on directional order.',
+    };
+  }
+  if (topic.includes('parts') || topic.includes('integral') || topic.includes('calculus')) {
+    return {
+      analogy: 'Integration by Parts is like trading a difficult chore for an easier one: you break down a complex product into pieces you can actually solve.',
+      diagnosticQuestion: "When choosing 'u' in Integration by Parts, what is the best strategy?",
+      optionA: "Pick the part that is easiest to integrate as 'u'",
+      optionB: "Pick the part whose derivative becomes simpler as 'u'",
+      correctOption: 'B',
+      misconceptionIfWrong: "Students often pick 'u' based on ease of integration rather than ease of differentiation.",
+    };
+  }
+
+  const cleanTitle = rawTopic.trim() || 'this topic';
+  return {
+    analogy: `${cleanTitle} is like trading a difficult chore for an easier one: you break down a complex system into manageable pieces you can actually solve.`,
+    diagnosticQuestion: `When applying key principles of ${cleanTitle}, what is the most critical first step?`,
+    optionA: `Identify the core structure that simplifies under transformation`,
+    optionB: `Attempt direct calculation without simplifying assumptions`,
+    correctOption: 'A',
+    misconceptionIfWrong: `Students often attempt direct calculation rather than decomposing the problem into its foundational components.`,
+  };
+}
+
 export async function generateIntervention(topic: string): Promise<InterventionResult> {
   const currentTopic = topic.trim() || 'Integration by Parts';
   const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
-
-  // Safe fallback response (e.g. for Integration by Parts or when offline/failing)
-  const fallbackIntervention: InterventionResult = {
-    analogy: `Integration by Parts is like trading a difficult chore for an easier one: you break down a complex product into pieces you can actually solve.`,
-    diagnosticQuestion: `When choosing 'u' in Integration by Parts, what is the best strategy?`,
-    optionA: `Pick the part that is easiest to integrate as 'u'`,
-    optionB: `Pick the part whose derivative becomes simpler as 'u'`,
-    correctOption: 'B',
-    misconceptionIfWrong: `Students often pick 'u' based on ease of integration rather than ease of differentiation.`,
-  };
+  const fallbackIntervention = getTopicFallback(currentTopic);
 
   if (!apiKey || apiKey.trim() === '') {
     console.warn('VITE_GEMINI_API_KEY is not configured. Returning safe fallback intervention.');

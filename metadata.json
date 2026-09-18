@@ -1,0 +1,8 @@
+{
+  "name": "ClassPulse",
+  "description": "Real-time classroom confusion detection and AI-powered adaptive teaching support.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

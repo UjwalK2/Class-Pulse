@@ -1,13 +1,4 @@
 import { useEffect, useState, useRef } from 'react';
-import {
-  collection,
-  addDoc,
-  doc,
-  updateDoc,
-  serverTimestamp,
-  onSnapshot,
-  getDocs,
-} from 'firebase/firestore';
 import { QRCodeSVG } from 'qrcode.react';
 import {
   ResponsiveContainer,
@@ -42,7 +33,16 @@ import {
   Clock,
   HelpCircle,
 } from 'lucide-react';
-import { db } from '../lib/firebase';
+import {
+  db,
+  collection,
+  addDoc,
+  doc,
+  updateDoc,
+  serverTimestamp,
+  onSnapshot,
+  getDocs,
+} from '../lib/firebase';
 import { useConfusionSignal } from '../hooks/useConfusionSignal';
 import { generateIntervention, type InterventionResult } from '../lib/gemini';
 
@@ -65,7 +65,7 @@ interface HeatmapBucket {
 
 export default function TeacherView() {
   const [roomId, setRoomId] = useState<string | null>(null);
-  const [sessionStartTime, setSessionStartTime] = useState<number>(Date.now());
+  const [sessionStartTime, setSessionStartTime] = useState<number>(() => Date.now());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);

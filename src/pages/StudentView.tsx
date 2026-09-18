@@ -1,13 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import {
-  doc,
-  collection,
-  addDoc,
-  serverTimestamp,
-  onSnapshot,
-} from 'firebase/firestore';
-import {
   CheckCircle,
   HelpCircle,
   AlertTriangle,
@@ -18,7 +11,14 @@ import {
   Meh,
   Frown,
 } from 'lucide-react';
-import { db } from '../lib/firebase';
+import {
+  db,
+  doc,
+  collection,
+  addDoc,
+  serverTimestamp,
+  onSnapshot,
+} from '../lib/firebase';
 
 type SignalType = 'got_it' | 'kinda' | 'lost';
 

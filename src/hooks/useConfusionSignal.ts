@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { collection, onSnapshot, query } from 'firebase/firestore';
-import { db } from '../lib/firebase';
+import { db, collection, onSnapshot, query } from '../lib/firebase';
 
 export interface RawSignal {
   id: string;
@@ -42,20 +41,19 @@ export function useConfusionSignal(roomId: string | null) {
     if (!roomId) {
       signalsRef.current = [];
       pointCounterRef.current = 0;
-      setHasReceivedSignal(false);
-      setHistory([]);
+      queueMicrotask(() => {
+        setHasReceivedSignal(false);
+        setHistory([]);
+      });
       return;
     }
 
-    // Reset here too, not just in the `!roomId` branch above: if roomId
-    // changes directly from one room to another (no null in between), the
-    // old room's signals would otherwise sit in signalsRef.current and get
-    // scored as if they belonged to the new room until the new room's
-    // first onSnapshot callback arrives.
     signalsRef.current = [];
     pointCounterRef.current = 0;
-    setHasReceivedSignal(false);
-    setHistory([]);
+    queueMicrotask(() => {
+      setHasReceivedSignal(false);
+      setHistory([]);
+    });
 
     const signalsCollectionRef = collection(db, 'sessions', roomId, 'signals');
     const signalsQuery = query(signalsCollectionRef);
