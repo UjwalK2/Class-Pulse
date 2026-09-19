@@ -1,13 +1,87 @@
 import express, { type Request, type Response } from 'express';
 import cors from 'cors';
+import http from 'http';
+import os from 'os';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import { db } from './server/db.js';
 import { generateInterventionServer } from './server/gemini.js';
 
+export interface NetworkInterfaceInfo {
+  name: string;
+  address: string;
+  isDefault: boolean;
+}
+
+export function getNetworkInfo(): { localIp: string; allIps: NetworkInterfaceInfo[] } {
+  const envIp = process.env.LOCAL_IP || process.env.HOST_IP;
+  const interfaces = os.networkInterfaces();
+  const candidates: { name: string; address: string; priority: number }[] = [];
+
+  for (const [name, netList] of Object.entries(interfaces)) {
+    if (!netList) continue;
+    for (const net of netList) {
+      if (net.family === 'IPv4' && !net.internal) {
+        const addr = net.address;
+        if (addr.startsWith('169.254.')) continue; // ignore link-local
+
+        let priority = 10;
+        const lowerName = name.toLowerCase();
+
+        // High priority for Wi-Fi and physical Ethernet
+        if (lowerName.includes('wi-fi') || lowerName.includes('wlan') || lowerName.includes('wireless')) {
+          priority += 50;
+        } else if (lowerName.includes('ethernet') || lowerName.startsWith('eth') || lowerName.startsWith('en')) {
+          priority += 40;
+        }
+
+        // Deprioritize virtual adapters (vEthernet, WSL, Docker, Tailscale, VM, etc.)
+        if (
+          lowerName.includes('vethernet') ||
+          lowerName.includes('wsl') ||
+          lowerName.includes('docker') ||
+          lowerName.includes('tailscale') ||
+          lowerName.includes('virtual') ||
+          lowerName.includes('vmware') ||
+          lowerName.includes('hyper-v') ||
+          lowerName.includes('pseudo')
+        ) {
+          priority -= 30;
+        }
+
+        // Prioritize common local subnet ranges
+        if (addr.startsWith('192.168.')) {
+          priority += 20;
+        } else if (addr.startsWith('10.')) {
+          priority += 15;
+        } else if (/^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(addr)) {
+          priority += 10;
+        }
+
+        candidates.push({ name, address: addr, priority });
+      }
+    }
+  }
+
+  candidates.sort((a, b) => b.priority - a.priority);
+
+  const primaryIp = envIp || (candidates.length > 0 ? candidates[0].address : 'localhost');
+  const allIps: NetworkInterfaceInfo[] = candidates.map((c) => ({
+    name: c.name,
+    address: c.address,
+    isDefault: c.address === primaryIp,
+  }));
+
+  if (envIp && !allIps.some((item) => item.address === envIp)) {
+    allIps.unshift({ name: 'Custom (Env)', address: envIp, isDefault: true });
+  }
+
+  return { localIp: primaryIp, allIps };
+}
+
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT) || 3000;
 
   app.use(cors());
   app.use(express.json());
@@ -42,14 +116,28 @@ async function startServer() {
     });
   });
 
-  // App configuration state
+  // App configuration & network state
   app.get('/api/config', (_req: Request, res: Response) => {
     const hasFirebase = Boolean(
       process.env.VITE_FIREBASE_API_KEY && process.env.VITE_FIREBASE_PROJECT_ID
     );
+    const { localIp, allIps } = getNetworkInfo();
     res.json({
       primaryStorage: 'json',
       firebaseConfigured: hasFirebase,
+      localIp,
+      port: PORT,
+      allIps,
+    });
+  });
+
+  // Dedicated network info endpoint
+  app.get('/api/network-info', (_req: Request, res: Response) => {
+    const { localIp, allIps } = getNetworkInfo();
+    res.json({
+      localIp,
+      port: PORT,
+      allIps,
     });
   });
 
@@ -174,11 +262,18 @@ async function startServer() {
   });
 
   // -------------------------------------------------------------------------
-  // Vite Frontend Middleware
+  // Vite Frontend Middleware & Server Startup
   // -------------------------------------------------------------------------
+  const httpServer = http.createServer(app);
+
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        watch: {
+          ignored: ['**/data/**', '**/*.json', '**/.git/**'],
+        },
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);
@@ -190,9 +285,16 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`[ClassPulse] Full-Stack Server running at http://0.0.0.0:${PORT}`);
+  httpServer.listen(PORT, '0.0.0.0', () => {
+    const { localIp } = getNetworkInfo();
+    console.log('\n  \x1b[36mClassPulse Server\x1b[0m is running:');
+    console.log(`  \x1b[32m➜\x1b[0m  \x1b[1mLocal:\x1b[0m   http://localhost:${PORT}`);
+    if (localIp && localIp !== 'localhost') {
+      console.log(`  \x1b[32m➜\x1b[0m  \x1b[1mNetwork:\x1b[0m http://${localIp}:${PORT}  \x1b[90m(QR Code & other devices on Wi-Fi)\x1b[0m`);
+    }
+    console.log(`  \x1b[32m➜\x1b[0m  \x1b[1mStatus:\x1b[0m  Optimized for local host and local network devices\n`);
   });
 }
 
 startServer();
+

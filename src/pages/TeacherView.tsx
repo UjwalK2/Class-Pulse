@@ -33,6 +33,11 @@ import {
   Clock,
   HelpCircle,
   Database,
+  Wifi,
+  Laptop,
+  ExternalLink,
+  Globe,
+  ChevronDown,
 } from 'lucide-react';
 import {
   db,
@@ -65,6 +70,18 @@ interface HeatmapBucket {
   count: number;
 }
 
+interface NetworkInterfaceItem {
+  name: string;
+  address: string;
+  isDefault: boolean;
+}
+
+interface NetworkConfig {
+  localIp: string;
+  port: number;
+  allIps: NetworkInterfaceItem[];
+}
+
 export default function TeacherView() {
   const [roomId, setRoomId] = useState<string | null>(null);
   const [sessionStartTime, setSessionStartTime] = useState<number>(() => Date.now());
@@ -72,6 +89,13 @@ export default function TeacherView() {
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const sessionCreatedRef = useRef(false);
+
+  // Network connection & local IP discovery state
+  const [networkConfig, setNetworkConfig] = useState<NetworkConfig | null>(null);
+  const [selectedHostMode, setSelectedHostMode] = useState<'network' | 'localhost'>('network');
+  const [activeLanIp, setActiveLanIp] = useState<string>('');
+  const [hostDropdownOpen, setHostDropdownOpen] = useState(false);
+  const hostDropdownRef = useRef<HTMLDivElement>(null);
 
   // Current Topic with debounce
   const [currentTopic, setCurrentTopic] = useState('');
@@ -141,6 +165,36 @@ export default function TeacherView() {
     if (sessionCreatedRef.current) return;
     sessionCreatedRef.current = true;
     initializeSession();
+  }, []);
+
+  // Fetch server network configuration (local IP & adapters)
+  useEffect(() => {
+    fetch('/api/config')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data && data.localIp) {
+          setNetworkConfig({
+            localIp: data.localIp,
+            port: data.port || 3000,
+            allIps: data.allIps || [],
+          });
+          setActiveLanIp(data.localIp);
+        }
+      })
+      .catch((err) => {
+        console.warn('[TeacherView] Could not fetch server network config:', err);
+      });
+  }, []);
+
+  // Close host dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (hostDropdownRef.current && !hostDropdownRef.current.contains(e.target as Node)) {
+        setHostDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
   // Listen to the session doc to track if diagnosticQuestion is currently active
@@ -365,7 +419,38 @@ export default function TeacherView() {
     }
   };
 
-  const joinUrl = roomId ? `${window.location.origin}/join/${roomId}` : '';
+  // Determine effective origin for student devices (local IP on Wi-Fi vs localhost vs custom)
+  const effectiveBaseUrl = (() => {
+    // 1. Explicit Localhost mode
+    if (selectedHostMode === 'localhost') {
+      const port = window.location.port
+        ? `:${window.location.port}`
+        : networkConfig?.port
+          ? `:${networkConfig.port}`
+          : ':3000';
+      return `${window.location.protocol}//localhost${port}`;
+    }
+
+    // 2. Network mode (default)
+    const hostname = window.location.hostname;
+    const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '0.0.0.0';
+
+    if (!isLocalhost) {
+      // Teacher is already browsing via LAN IP or public domain
+      return window.location.origin;
+    }
+
+    // Teacher opened on localhost: automatically route other devices to LAN IP
+    const targetIp = activeLanIp || networkConfig?.localIp;
+    if (targetIp && targetIp !== 'localhost') {
+      const port = window.location.port || (networkConfig?.port ? `${networkConfig.port}` : '3000');
+      return `${window.location.protocol}//${targetIp}${port ? `:${port}` : ''}`;
+    }
+
+    return window.location.origin;
+  })();
+
+  const joinUrl = roomId ? `${effectiveBaseUrl}/join/${roomId}` : '';
 
   const handleCopy = () => {
     if (!roomId) return;
@@ -374,204 +459,277 @@ export default function TeacherView() {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const chartStrokeColor = isConfusionSpike ? '#ef4444' : '#10b981';
+  const chartStrokeColor = isConfusionSpike ? '#cdc4ba' : 'rgba(205,196,186,0.5)';
 
   const totalTally = tallyA + tallyB;
   const percentA = totalTally > 0 ? Math.round((tallyA / totalTally) * 100) : 50;
   const percentB = totalTally > 0 ? Math.round((tallyB / totalTally) * 100) : 50;
 
   return (
-    <div className="min-h-screen w-full flex flex-col bg-slate-950 text-white p-4 sm:p-8">
-      {/* Header Bar */}
-      <header className="w-full max-w-5xl mx-auto flex items-center justify-between pb-6 border-b border-slate-900">
-        <div className="flex items-center gap-3">
-          <div className="h-10 w-10 rounded-xl bg-indigo-600 flex items-center justify-center text-white shadow-lg shadow-indigo-500/30">
-            <Radio className="h-5 w-5 animate-pulse" />
-          </div>
+    <div className="min-h-screen w-full flex flex-col bg-[#0a0a0a] text-[#cdc4ba]">
+      {/* ── Header ─────────────────────────────────────────────── */}
+      <header className="w-full px-6 sm:px-10 py-4 flex items-center justify-between border-b border-[#cdc4ba]/15 bg-[#0a0a0a] sticky top-0 z-30">
+        <div className="flex items-center gap-4">
           <div>
-            <h1 className="text-xl font-bold tracking-tight">ClassPulse</h1>
-            <p className="text-xs text-slate-400">Teacher Dashboard</p>
+            <h1 className="text-sm font-semibold tracking-tight text-[#cdc4ba]">CLASSPULSE</h1>
+            <span className="eyebrow">TEACHER DOSSIER</span>
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
-          <div className="hidden sm:flex items-center gap-1.5 bg-slate-900 border border-slate-800 px-3 py-1.5 rounded-full text-xs font-mono text-slate-400">
-            <Database className="h-3.5 w-3.5 text-indigo-400" />
-            <span>{currentStorageMode === 'firebase' ? 'Firebase Cloud' : 'JSON Server DB'}</span>
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 ml-0.5" />
+        <div className="flex items-center gap-2 sm:gap-3">
+          {/* Host Mode Dropdown */}
+          <div className="relative" ref={hostDropdownRef}>
+            <button
+              type="button"
+              onClick={() => setHostDropdownOpen((prev) => !prev)}
+              className="flex items-center gap-1.5 border border-[#cdc4ba]/20 hover:border-[#cdc4ba]/50 hover:bg-[#cdc4ba]/5 px-3 py-1.5 font-mono text-xs text-[#cdc4ba]/70 transition-all cursor-pointer"
+              title="Configure QR Code Network Host"
+            >
+              <Globe className="h-3 w-3 text-[#cdc4ba]/40" />
+              <span className="hidden md:inline text-[#cdc4ba]/40">HOST:</span>
+              <span className="text-[#cdc4ba]">
+                {selectedHostMode === 'network' ? (activeLanIp || 'WIFI') : 'localhost'}
+              </span>
+              <ChevronDown
+                className={`h-3 w-3 text-[#cdc4ba]/40 transition-transform duration-200 ${
+                  hostDropdownOpen ? 'rotate-180' : ''
+                }`}
+              />
+            </button>
+
+            {hostDropdownOpen && (
+              <div className="absolute right-0 top-full mt-1 w-72 sm:w-80 bg-[#0d0d0d] border border-[#cdc4ba]/20 p-4 z-50 text-left animate-in fade-in duration-150">
+                <div className="flex items-center justify-between pb-2.5 mb-3 border-b border-[#cdc4ba]/15">
+                  <span className="eyebrow">QR LINK TARGET HOST</span>
+                  <span className="font-mono text-[10px] text-[#cdc4ba]/40">
+                    :{networkConfig?.port || window.location.port || 3000}
+                  </span>
+                </div>
+
+                <p className="font-mono text-[11px] text-[#cdc4ba]/40 mb-3 leading-relaxed">
+                  Select which address student phones use when scanning:
+                </p>
+
+                <div className="flex flex-col gap-2">
+                  <button
+                    type="button"
+                    onClick={() => { setSelectedHostMode('network'); setHostDropdownOpen(false); }}
+                    className={`w-full flex items-center justify-between p-2.5 text-xs border transition-all cursor-pointer ${
+                      selectedHostMode === 'network'
+                        ? 'border-[#cdc4ba]/60 bg-[#cdc4ba]/8 text-[#cdc4ba]'
+                        : 'border-[#cdc4ba]/15 text-[#cdc4ba]/60 hover:bg-[#cdc4ba]/5 hover:border-[#cdc4ba]/30'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <Wifi className="h-3.5 w-3.5 text-[#cdc4ba]/50" />
+                      <div className="text-left">
+                        <div className="font-medium text-[#cdc4ba]">Local Wi-Fi IP</div>
+                        <div className="font-mono text-[10px] text-[#cdc4ba]/40">
+                          {activeLanIp || networkConfig?.localIp || 'Detecting...'}
+                        </div>
+                      </div>
+                    </div>
+                    {selectedHostMode === 'network' && (
+                      <Check className="h-3.5 w-3.5 text-[#cdc4ba]" />
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => { setSelectedHostMode('localhost'); setHostDropdownOpen(false); }}
+                    className={`w-full flex items-center justify-between p-2.5 text-xs border transition-all cursor-pointer ${
+                      selectedHostMode === 'localhost'
+                        ? 'border-[#cdc4ba]/60 bg-[#cdc4ba]/8 text-[#cdc4ba]'
+                        : 'border-[#cdc4ba]/15 text-[#cdc4ba]/60 hover:bg-[#cdc4ba]/5 hover:border-[#cdc4ba]/30'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <Laptop className="h-3.5 w-3.5 text-[#cdc4ba]/50" />
+                      <div className="text-left">
+                        <div className="font-medium text-[#cdc4ba]">Localhost</div>
+                        <div className="font-mono text-[10px] text-[#cdc4ba]/40">
+                          localhost:{networkConfig?.port || window.location.port || 3000}
+                        </div>
+                      </div>
+                    </div>
+                    {selectedHostMode === 'localhost' && (
+                      <Check className="h-3.5 w-3.5 text-[#cdc4ba]" />
+                    )}
+                  </button>
+                </div>
+
+                {/* Multi-adapter selection */}
+                {selectedHostMode === 'network' && networkConfig && networkConfig.allIps && networkConfig.allIps.length > 1 && (
+                  <div className="mt-3 pt-3 border-t border-[#cdc4ba]/15 flex flex-col gap-1.5">
+                    <label className="eyebrow">NETWORK ADAPTER</label>
+                    <select
+                      value={activeLanIp}
+                      onChange={(e) => setActiveLanIp(e.target.value)}
+                      className="w-full bg-[#0a0a0a] border border-[#cdc4ba]/20 text-[#cdc4ba] text-xs p-2 focus:outline-none font-mono"
+                    >
+                      {networkConfig.allIps.map((item) => (
+                        <option key={item.address} value={item.address}>
+                          {item.name}: {item.address} {item.isDefault ? '(default)' : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                <div className="mt-3 pt-2.5 border-t border-[#cdc4ba]/15 font-mono text-[10px] text-[#cdc4ba]/30 leading-normal">
+                  Devices on same Wi-Fi router connect via this address.
+                </div>
+              </div>
+            )}
           </div>
 
+          {/* Storage Mode Badge */}
+          <div className="hidden sm:flex items-center gap-1.5 border border-[#cdc4ba]/15 px-3 py-1.5 font-mono text-xs text-[#cdc4ba]/40">
+            <Database className="h-3 w-3" />
+            <span>{currentStorageMode === 'firebase' ? 'Firebase' : 'JSON DB'}</span>
+          </div>
+
+          {/* Live indicator */}
           {roomId && !isSessionEnded && (
-            <div className="flex items-center gap-2 bg-slate-900 border border-slate-800 px-3.5 py-1.5 rounded-full text-xs font-medium text-emerald-400">
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-              Session Live
+            <div className="flex items-center gap-1.5 border border-[#cdc4ba]/20 px-3 py-1.5 font-mono text-xs text-[#cdc4ba]/70">
+              <span className="w-1.5 h-1.5 rounded-full bg-[#cdc4ba] animate-pulse" />
+              LIVE
             </div>
           )}
 
+          {/* End Session */}
           {roomId && !isSessionEnded && (
             <button
               type="button"
               onClick={handleEndSession}
-              className="flex items-center gap-2 bg-rose-600/20 hover:bg-rose-600 border border-rose-500/40 text-rose-300 hover:text-white text-xs font-semibold px-4 py-2 rounded-xl transition-all cursor-pointer shadow-md"
+              className="flex items-center gap-1.5 border border-[#cdc4ba]/20 hover:border-[#cdc4ba]/60 hover:bg-[#cdc4ba]/5 text-[#cdc4ba]/60 hover:text-[#cdc4ba] font-mono text-xs px-3 py-1.5 transition-all cursor-pointer"
             >
-              <Power className="h-3.5 w-3.5" />
-              <span>End Session</span>
+              <Power className="h-3 w-3" />
+              END SESSION
             </button>
           )}
 
+          {/* New Session */}
           {isSessionEnded && (
             <button
               type="button"
               onClick={initializeSession}
-              className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold px-4 py-2 rounded-xl transition-all cursor-pointer shadow-md"
+              className="flex items-center gap-1.5 border border-[#cdc4ba]/40 hover:border-[#cdc4ba] hover:bg-[#cdc4ba]/5 text-[#cdc4ba] font-mono text-xs px-3 py-1.5 transition-all cursor-pointer"
             >
-              <RotateCcw className="h-3.5 w-3.5" />
-              <span>New Session</span>
+              <RotateCcw className="h-3 w-3" />
+              NEW SESSION
             </button>
           )}
         </div>
       </header>
 
-      {/* Main Container */}
-      <main className="w-full max-w-5xl mx-auto flex-1 flex flex-col items-center justify-start py-8 gap-8">
+      {/* ── Main ───────────────────────────────────────────────── */}
+      <main className="w-full max-w-4xl mx-auto flex-1 flex flex-col px-6 sm:px-10 py-10 gap-16">
+
+        {/* Loading State */}
         {loading && (
-          <div className="flex flex-col items-center gap-4 my-auto">
-            <Loader2 className="h-12 w-12 text-indigo-500 animate-spin" />
-            <p className="text-slate-300 font-medium text-lg">Initializing classroom session...</p>
+          <div className="flex flex-col items-center gap-4 my-auto py-20">
+            <Loader2 className="h-8 w-8 text-[#cdc4ba]/40 animate-spin" />
+            <p className="eyebrow">INITIALIZING SESSION</p>
           </div>
         )}
 
+        {/* Error State */}
         {error && (
-          <div className="w-full max-w-lg bg-red-950/50 border border-red-800/80 rounded-2xl p-6 flex flex-col items-center gap-4 text-center my-auto">
-            <div className="h-12 w-12 rounded-full bg-red-900/50 flex items-center justify-center text-red-400">
-              <AlertCircle className="h-6 w-6" />
-            </div>
-            <div>
-              <h2 className="text-lg font-semibold text-red-200">Unable to create session</h2>
-              <p className="text-sm text-red-300/80 mt-1">{error}</p>
-              <p className="text-xs text-slate-400 mt-3">
-                Ensure valid Firebase credentials are set in <code className="bg-slate-900 px-2 py-0.5 rounded text-slate-300">.env</code>
-              </p>
-            </div>
+          <div className="border border-[#cdc4ba]/30 bg-[#cdc4ba]/5 p-6 flex flex-col gap-3 my-auto">
+            <span className="eyebrow">SESSION ERROR</span>
+            <p className="text-sm text-[#cdc4ba]/70">{error}</p>
+            <p className="font-mono text-[11px] text-[#cdc4ba]/40">
+              Verify Firebase credentials in{' '}
+              <code className="border border-[#cdc4ba]/20 px-1.5 py-0.5 font-mono text-[#cdc4ba]/60">.env</code>
+            </p>
           </div>
         )}
 
-        {/* ---------------- SECTION: POST-SESSION SUMMARY VIEW ---------------- */}
+        {/* ────────────── POST-SESSION SUMMARY VIEW ────────────── */}
         {isSessionEnded && !loading && (
-          <div className="w-full max-w-4xl flex flex-col gap-8 animate-in fade-in zoom-in-95 duration-300">
-            {/* Summary Banner */}
-            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-xl">
-              <div className="flex items-center gap-4">
-                <div className="h-14 w-14 rounded-2xl bg-indigo-500/20 border border-indigo-500/40 text-indigo-400 flex items-center justify-center shrink-0">
-                  <BarChart3 className="h-7 w-7" />
-                </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-bold uppercase tracking-widest text-indigo-400">
-                      Post-Lecture Report
-                    </span>
-                    <span className="text-[10px] bg-slate-800 text-slate-300 px-2 py-0.5 rounded-full">
-                      Room {roomId}
-                    </span>
-                  </div>
-                  <h2 className="text-2xl sm:text-3xl font-black text-white mt-1">
-                    Curriculum Bottleneck Heatmap
-                  </h2>
-                  <p className="text-xs text-slate-400 mt-1">
-                    Aggregated confusion distribution grouped into 2-minute lecture segments
-                  </p>
-                </div>
-              </div>
+          <div className="flex flex-col gap-12 animate-in fade-in duration-300">
 
-              <div className="flex items-center gap-2 text-xs text-slate-400">
-                <Clock className="h-4 w-4 text-slate-500" />
-                <span>Session Ended</span>
-              </div>
+            {/* 05 // Summary Banner */}
+            <div className="flex flex-col gap-1 border-b border-[#cdc4ba]/15 pb-6">
+              <span className="eyebrow">05 // POST-SESSION REPORT</span>
+              <h2 className="text-2xl sm:text-3xl font-normal tracking-tight text-[#cdc4ba]">
+                Bottleneck Heatmap
+              </h2>
+              <p className="font-mono text-xs text-[#cdc4ba]/40 mt-1">
+                CONFUSION DISTRIBUTION IN 2-MINUTE LECTURE SEGMENTS &nbsp;·&nbsp; ROOM {roomId}
+              </p>
             </div>
 
             {loadingSummary ? (
-              <div className="py-16 flex flex-col items-center justify-center gap-3">
-                <Loader2 className="h-10 w-10 text-indigo-500 animate-spin" />
-                <p className="text-sm text-slate-400 font-medium">Aggregating bottleneck heatmap...</p>
+              <div className="py-12 flex flex-col items-center gap-3">
+                <Loader2 className="h-8 w-8 text-[#cdc4ba]/40 animate-spin" />
+                <p className="eyebrow">AGGREGATING DATA</p>
               </div>
             ) : (
               <>
-                {/* 1. Miniature Bottleneck Heatmap (BarChart) */}
-                <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-xl flex flex-col gap-5">
-                  <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                {/* Confusion BarChart */}
+                <div className="flex flex-col gap-5 border border-[#cdc4ba]/15 p-6">
+                  <div className="flex items-center justify-between border-b border-[#cdc4ba]/15 pb-3">
                     <div>
-                      <h3 className="text-base font-bold text-white">
-                        Average Confusion Score per 2-Minute Window
-                      </h3>
-                      <p className="text-xs text-slate-400">
-                        High red bars indicate key lecture bottlenecks where students struggled most
+                      <span className="eyebrow block mb-1">CONFUSION SCORE / 2-MIN WINDOW</span>
+                      <p className="font-mono text-[11px] text-[#cdc4ba]/40">
+                        High bars indicate lecture bottlenecks where students struggled most
                       </p>
                     </div>
                   </div>
 
                   {summaryBuckets.length > 0 ? (
-                    <div className="w-full h-72 sm:h-80 pt-4">
+                    <div className="w-full h-64 sm:h-72 pt-2">
                       <ResponsiveContainer width="100%" height="100%">
-                        <BarChart
-                          data={summaryBuckets}
-                          margin={{ top: 10, right: 10, left: -20, bottom: 0 }}
-                        >
+                        <BarChart data={summaryBuckets} margin={{ top: 8, right: 8, left: -24, bottom: 0 }}>
                           <XAxis
                             dataKey="bucket"
-                            tick={{ fill: '#94a3b8', fontSize: 11 }}
-                            tickLine={{ stroke: '#334155' }}
-                            axisLine={{ stroke: '#334155' }}
+                            tick={{ fill: 'rgba(205,196,186,0.4)', fontSize: 10, fontFamily: 'JetBrains Mono, monospace' }}
+                            tickLine={{ stroke: 'rgba(205,196,186,0.1)' }}
+                            axisLine={{ stroke: 'rgba(205,196,186,0.1)' }}
                           />
                           <YAxis
                             domain={[0, 100]}
-                            tick={{ fill: '#94a3b8', fontSize: 11 }}
-                            tickLine={{ stroke: '#334155' }}
-                            axisLine={{ stroke: '#334155' }}
+                            tick={{ fill: 'rgba(205,196,186,0.4)', fontSize: 10, fontFamily: 'JetBrains Mono, monospace' }}
+                            tickLine={{ stroke: 'rgba(205,196,186,0.1)' }}
+                            axisLine={{ stroke: 'rgba(205,196,186,0.1)' }}
                             ticks={[0, 25, 50, 75, 100]}
                           />
                           <Tooltip
                             contentStyle={{
-                              backgroundColor: '#0f172a',
-                              borderColor: '#334155',
-                              borderRadius: '0.75rem',
-                              fontSize: '12px',
-                              color: '#fff',
+                              backgroundColor: '#0d0d0d',
+                              borderColor: 'rgba(205,196,186,0.2)',
+                              borderRadius: '2px',
+                              fontSize: '11px',
+                              color: '#cdc4ba',
+                              fontFamily: 'JetBrains Mono, monospace',
                             }}
-                            formatter={(value, name) => [
-                              `${value}%`,
-                              name === 'confusionScore' ? 'Avg Confusion' : name,
-                            ]}
-                            labelFormatter={(label) => `Lecture Interval: ${label}`}
+                            formatter={(value, name) => [`${value}%`, name === 'confusionScore' ? 'Confusion' : name]}
+                            labelFormatter={(label) => `Interval: ${label}`}
                           />
-                          <Bar dataKey="confusionScore" radius={[6, 6, 0, 0]}>
+                          <Bar dataKey="confusionScore" radius={[0, 0, 0, 0]}>
                             {summaryBuckets.map((entry, index) => {
-                              const fill =
-                                entry.confusionScore >= 50
-                                  ? '#ef4444' // Red spike
-                                  : entry.confusionScore >= 25
-                                  ? '#f59e0b' // Amber moderate
-                                  : '#10b981'; // Green clear
-                              return <Cell key={`cell-${index}`} fill={fill} />;
+                              const opacity = entry.confusionScore >= 50 ? 1 : entry.confusionScore >= 25 ? 0.6 : 0.3;
+                              return <Cell key={`cell-${index}`} fill={`rgba(205,196,186,${opacity})`} />;
                             })}
                           </Bar>
                         </BarChart>
                       </ResponsiveContainer>
                     </div>
                   ) : (
-                    <div className="py-12 text-center text-slate-500 text-sm">
+                    <div className="py-10 text-center font-mono text-xs text-[#cdc4ba]/30">
                       No response signals recorded during this session.
                     </div>
                   )}
                 </div>
 
-                {/* 2. Diagnostic Question Events Recap */}
-                <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-xl flex flex-col gap-6">
-                  <div className="border-b border-slate-800 pb-3">
-                    <h3 className="text-base font-bold text-white">
-                      Diagnostic Checks & Confirmed Misconceptions
-                    </h3>
-                    <p className="text-xs text-slate-400">
-                      Summary of AI-assisted concept checks pushed to students during this session
+                {/* Diagnostic Recap */}
+                <div className="flex flex-col gap-6 border border-[#cdc4ba]/15 p-6">
+                  <div className="border-b border-[#cdc4ba]/15 pb-3">
+                    <span className="eyebrow block mb-1">DIAGNOSTIC CHECKS & CONFIRMED MISCONCEPTIONS</span>
+                    <p className="font-mono text-[11px] text-[#cdc4ba]/40">
+                      AI-assisted concept checks pushed to students during this session
                     </p>
                   </div>
 
@@ -583,92 +741,69 @@ export default function TeacherView() {
                         const pB = total > 0 ? Math.round((diag.tallyB / total) * 100) : 0;
 
                         return (
-                          <div
-                            key={diag.id || index}
-                            className="bg-slate-950/80 border border-slate-800 rounded-2xl p-5 flex flex-col gap-4"
-                          >
+                          <div key={diag.id || index} className="border border-[#cdc4ba]/15 p-5 flex flex-col gap-4">
                             <div className="flex items-start justify-between gap-3">
                               <div>
-                                <span className="text-[10px] uppercase font-bold tracking-wider text-indigo-400">
-                                  Diagnostic Prompt #{index + 1}
+                                <span className="eyebrow block mb-1">
+                                  CHECK #{String(index + 1).padStart(2, '0')}
                                 </span>
-                                <h4 className="text-base font-semibold text-white mt-0.5">
+                                <h4 className="text-sm font-medium text-[#cdc4ba] leading-snug">
                                   {diag.question}
                                 </h4>
                               </div>
-                              <span className="text-xs font-mono text-slate-400 shrink-0 bg-slate-900 px-2.5 py-1 rounded-lg border border-slate-800">
+                              <span className="font-mono text-[10px] text-[#cdc4ba]/40 border border-[#cdc4ba]/15 px-2 py-1 shrink-0">
                                 {total} responses
                               </span>
                             </div>
 
-                            {/* Options with breakdown */}
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                              <div className="bg-slate-900 border border-slate-800 rounded-xl p-3.5 flex items-start gap-3">
-                                <span className={`h-6 w-6 rounded-lg font-bold text-xs flex items-center justify-center shrink-0 ${
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                              <div className="border border-[#cdc4ba]/15 p-3 flex items-start gap-3">
+                                <span className={`font-mono text-xs px-1.5 py-0.5 border shrink-0 ${
                                   diag.correctOption === 'A'
-                                    ? 'bg-emerald-950 text-emerald-300 border border-emerald-500/30'
-                                    : 'bg-indigo-950 text-indigo-300 border border-indigo-500/30'
-                                }`}>
-                                  A
-                                </span>
-                                <div className="text-xs text-slate-300 flex-1">
+                                    ? 'border-[#cdc4ba]/60 text-[#cdc4ba]'
+                                    : 'border-[#cdc4ba]/20 text-[#cdc4ba]/40'
+                                }`}>A</span>
+                                <div className="text-xs text-[#cdc4ba]/70 flex-1">
                                   <div className="flex items-center justify-between mb-1">
-                                    <span className={`font-semibold ${
-                                      diag.correctOption === 'A' ? 'text-emerald-300' : 'text-slate-200'
-                                    }`}>
-                                      {diag.correctOption === 'A' ? 'Target Concept' : 'Misconception'}
+                                    <span className="font-mono text-[10px] text-[#cdc4ba]/40">
+                                      {diag.correctOption === 'A' ? 'TARGET' : 'MISCONCEPTION'}
                                     </span>
-                                    <span className="font-mono font-bold text-indigo-300">
-                                      {diag.tallyA} votes ({pA}%)
-                                    </span>
+                                    <span className="font-mono text-[#cdc4ba]/60">{diag.tallyA} ({pA}%)</span>
                                   </div>
                                   <p>{diag.optionA}</p>
                                 </div>
                               </div>
 
-                              <div className="bg-slate-900 border border-slate-800 rounded-xl p-3.5 flex items-start gap-3">
-                                <span className={`h-6 w-6 rounded-lg font-bold text-xs flex items-center justify-center shrink-0 ${
+                              <div className="border border-[#cdc4ba]/15 p-3 flex items-start gap-3">
+                                <span className={`font-mono text-xs px-1.5 py-0.5 border shrink-0 ${
                                   diag.correctOption === 'B' || !diag.correctOption
-                                    ? 'bg-emerald-950 text-emerald-300 border border-emerald-500/30'
-                                    : 'bg-indigo-950 text-indigo-300 border border-indigo-500/30'
-                                }`}>
-                                  B
-                                </span>
-                                <div className="text-xs text-slate-300 flex-1">
+                                    ? 'border-[#cdc4ba]/60 text-[#cdc4ba]'
+                                    : 'border-[#cdc4ba]/20 text-[#cdc4ba]/40'
+                                }`}>B</span>
+                                <div className="text-xs text-[#cdc4ba]/70 flex-1">
                                   <div className="flex items-center justify-between mb-1">
-                                    <span className={`font-semibold ${
-                                      diag.correctOption === 'B' || !diag.correctOption ? 'text-emerald-300' : 'text-slate-200'
-                                    }`}>
-                                      {diag.correctOption === 'B' || !diag.correctOption ? 'Target Concept' : 'Misconception'}
+                                    <span className="font-mono text-[10px] text-[#cdc4ba]/40">
+                                      {diag.correctOption === 'B' || !diag.correctOption ? 'TARGET' : 'MISCONCEPTION'}
                                     </span>
-                                    <span className="font-mono font-bold text-emerald-300">
-                                      {diag.tallyB} votes ({pB}%)
-                                    </span>
+                                    <span className="font-mono text-[#cdc4ba]/60">{diag.tallyB} ({pB}%)</span>
                                   </div>
                                   <p>{diag.optionB}</p>
                                 </div>
                               </div>
                             </div>
 
-                            {/* Split bar visualization */}
-                            <div className="w-full h-4 bg-slate-900 rounded-lg overflow-hidden flex border border-slate-800">
-                              <div
-                                style={{ width: `${pA}%` }}
-                                className="bg-indigo-600 h-full transition-all duration-500"
-                              />
-                              <div
-                                style={{ width: `${pB}%` }}
-                                className="bg-emerald-600 h-full transition-all duration-500"
-                              />
+                            {/* Split bar */}
+                            <div className="w-full h-2 bg-[#cdc4ba]/10 overflow-hidden flex">
+                              <div style={{ width: `${pA}%` }} className="bg-[#cdc4ba]/50 h-full transition-all duration-500" />
+                              <div style={{ width: `${pB}%` }} className="bg-[#cdc4ba] h-full transition-all duration-500" />
                             </div>
                           </div>
                         );
                       })}
                     </div>
                   ) : (
-                    <div className="py-8 text-center text-slate-500 text-sm flex flex-col items-center gap-2">
-                      <HelpCircle className="h-6 w-6 text-slate-600" />
-                      <span>No diagnostic questions were pushed during this session.</span>
+                    <div className="py-8 text-center font-mono text-xs text-[#cdc4ba]/30">
+                      No diagnostic questions were pushed during this session.
                     </div>
                   )}
                 </div>
@@ -677,220 +812,172 @@ export default function TeacherView() {
           </div>
         )}
 
-        {/* ---------------- SECTION: LIVE SESSION DASHBOARD ---------------- */}
+        {/* ────────────── LIVE SESSION DASHBOARD ────────────── */}
         {!isSessionEnded && !loading && !error && roomId && (
-          <div className="w-full flex flex-col items-center gap-10">
-            {/* Top QR Code & Room Invitation Section */}
-            <section className="w-full flex flex-col items-center text-center">
-              <div className="mb-6">
-                <h2 className="text-3xl sm:text-4xl font-black tracking-tight text-white">
-                  Join the Session
+          <div className="w-full flex flex-col gap-16">
+
+            {/* 01 // ACCESS POINT */}
+            <section className="flex flex-col gap-6">
+              <div className="border-b border-[#cdc4ba]/15 pb-4">
+                <span className="eyebrow block mb-1">01 // ACCESS POINT &amp; INVITATION</span>
+                <h2 className="text-xl font-normal tracking-tight text-[#cdc4ba]">
+                  {selectedHostMode === 'localhost'
+                    ? 'Localhost Mode — This PC Only'
+                    : `Network Access — ${activeLanIp || networkConfig?.localIp || 'Detecting...'}`}
                 </h2>
-                <p className="text-slate-400 mt-2 text-sm sm:text-base">
-                  Scan the QR code with your camera or enter the room code manually
-                </p>
               </div>
 
-              {/* QR Code */}
-              <div className="p-6 bg-white rounded-3xl shadow-2xl shadow-indigo-500/10 ring-8 ring-indigo-500/10">
-                <QRCodeSVG
-                  value={joinUrl}
-                  size={260}
-                  level="H"
-                  includeMargin={true}
-                />
-              </div>
-
-              {/* Room Code Display */}
-              <div className="mt-8 flex flex-col items-center gap-2">
-                <span className="text-xs uppercase tracking-widest text-slate-400 font-semibold">
-                  Room ID Code
-                </span>
-                <div className="flex items-center gap-3 bg-slate-900/90 border border-slate-800 px-6 py-3 rounded-2xl shadow-inner">
-                  <span className="font-mono text-3xl sm:text-4xl font-bold tracking-wider text-indigo-400 select-all">
-                    {roomId}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={handleCopy}
-                    title="Copy Join Link"
-                    className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors cursor-pointer"
-                  >
-                    {copied ? (
-                      <Check className="h-5 w-5 text-emerald-400" />
-                    ) : (
-                      <Copy className="h-5 w-5" />
-                    )}
-                  </button>
+              <div className="flex flex-col sm:flex-row gap-8 items-start">
+                {/* QR Code */}
+                <div className="p-4 bg-white self-start">
+                  <QRCodeSVG value={joinUrl} size={200} level="H" includeMargin={true} />
                 </div>
-                <p className="text-xs text-slate-500 mt-1 select-all break-all max-w-sm">
-                  {joinUrl}
-                </p>
+
+                {/* Room ID + URL */}
+                <div className="flex flex-col gap-5 flex-1">
+                  <div>
+                    <span className="eyebrow block mb-2">ROOM ID</span>
+                    <div className="flex items-center gap-3 border border-[#cdc4ba]/20 px-4 py-3">
+                      <span className="font-mono text-3xl sm:text-4xl font-bold tracking-widest text-[#cdc4ba] select-all">
+                        {roomId}
+                      </span>
+                      <div className="flex items-center gap-1.5 border-l border-[#cdc4ba]/15 pl-3 ml-auto">
+                        <button
+                          type="button"
+                          onClick={handleCopy}
+                          title="Copy Join Link"
+                          className="p-1.5 border border-[#cdc4ba]/20 hover:border-[#cdc4ba]/60 hover:bg-[#cdc4ba]/5 text-[#cdc4ba]/60 hover:text-[#cdc4ba] transition-all cursor-pointer"
+                        >
+                          {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                        </button>
+                        <a
+                          href={joinUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          title="Open Student View in New Tab"
+                          className="p-1.5 border border-[#cdc4ba]/20 hover:border-[#cdc4ba]/60 hover:bg-[#cdc4ba]/5 text-[#cdc4ba]/60 hover:text-[#cdc4ba] transition-all"
+                        >
+                          <ExternalLink className="h-4 w-4" />
+                        </a>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <span className="eyebrow block mb-2">JOIN URL</span>
+                    <p className="font-mono text-xs text-[#cdc4ba]/50 select-all break-all border border-[#cdc4ba]/15 px-3 py-2">
+                      {joinUrl}
+                    </p>
+                  </div>
+
+                  <p className="font-mono text-[11px] text-[#cdc4ba]/30">
+                    Devices on same Wi-Fi network can scan QR or navigate to the URL above.
+                  </p>
+                </div>
               </div>
             </section>
 
-            {/* Current Topic Input Box (above dashboard) */}
-            <section className="w-full max-w-3xl bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-lg flex flex-col sm:flex-row items-start sm:items-center gap-4">
-              <div className="h-10 w-10 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 flex items-center justify-center shrink-0">
-                <BookOpen className="h-5 w-5" />
+            {/* 02 // LECTURE TOPIC */}
+            <section className="flex flex-col gap-4">
+              <div className="border-b border-[#cdc4ba]/15 pb-4">
+                <span className="eyebrow block mb-1">02 // LECTURE TOPIC</span>
+                <h2 className="text-xl font-normal tracking-tight text-[#cdc4ba]">
+                  Current Context (Broadcast to AI)
+                </h2>
               </div>
-              <div className="flex-1 w-full">
-                <label
-                  htmlFor="currentTopicInput"
-                  className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1"
-                >
-                  Current Topic (Broadcasted to Session & AI)
+
+              <div className="flex flex-col gap-2">
+                <label htmlFor="currentTopicInput" className="eyebrow">
+                  TOPIC STRING — BROADCASTED TO SESSION &amp; GEMINI
                 </label>
                 <input
                   id="currentTopicInput"
                   type="text"
                   value={currentTopic}
                   onChange={handleTopicChange}
-                  placeholder="e.g., Binary Search Trees, Dynamic Programming, Thermodynamics..."
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
+                  placeholder="e.g. Binary Search Trees, Dynamic Programming, Thermodynamics..."
+                  className="w-full bg-transparent border border-[#cdc4ba]/20 hover:border-[#cdc4ba]/40 focus:border-[#cdc4ba]/70 focus:outline-none px-4 py-3 font-mono text-sm text-[#cdc4ba] placeholder-[#cdc4ba]/20 transition-all"
                 />
               </div>
             </section>
 
-            {/* Live Comprehension Dashboard (appears once at least 1 signal is received) */}
+            {/* 03 // TELEMETRY (appears once signals received) */}
             {hasReceivedSignal ? (
-              <section className="w-full max-w-3xl flex flex-col gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-                {/* 1. Status Alert Card */}
-                {isConfusionSpike ? (
-                  <div className="w-full bg-rose-950/40 border-2 border-rose-500/80 rounded-3xl p-6 shadow-2xl shadow-rose-950/50 animate-pulse flex flex-col gap-5">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <div className="h-10 w-10 rounded-xl bg-rose-600 text-white flex items-center justify-center">
-                          <AlertTriangle className="h-6 w-6" />
-                        </div>
-                        <div>
-                          <h3 className="text-lg sm:text-xl font-black text-rose-300">
-                            ⚠ Confusion Spike Detected
-                          </h3>
-                          <p className="text-xs text-rose-300/80">
-                            Confusion score is at {latestStats.confusionScore}% (&gt;= 50% threshold)
-                          </p>
-                        </div>
-                      </div>
-                      <div className="text-right hidden sm:block">
-                        <span className="text-xs uppercase tracking-wider text-rose-400/80 font-bold block">
-                          60s Window
-                        </span>
-                        <span className="text-sm font-mono text-rose-200">
-                          {latestStats.totalInWindow} responses
-                        </span>
-                      </div>
+              <section className="flex flex-col gap-8 animate-in fade-in duration-300">
+                <div className="border-b border-[#cdc4ba]/15 pb-4">
+                  <span className="eyebrow block mb-1">03 // TELEMETRY &amp; LIVE PULSE</span>
+                  <h2 className="text-xl font-normal tracking-tight text-[#cdc4ba]">
+                    Real-Time Comprehension Signal
+                  </h2>
+                </div>
+
+                {/* Status Card */}
+                <div className={`border p-6 flex flex-col gap-5 ${
+                  isConfusionSpike
+                    ? 'border-[#cdc4ba] bg-[#cdc4ba]/5'
+                    : 'border-[#cdc4ba]/20'
+                }`}>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <span className="eyebrow block mb-1">
+                        {isConfusionSpike ? '⚠ CONFUSION SPIKE DETECTED' : 'COMPREHENSION NOMINAL'}
+                      </span>
+                      <p className="font-mono text-sm text-[#cdc4ba]">
+                        Confusion score: {latestStats.confusionScore}% {isConfusionSpike ? '(≥ 50% threshold)' : '(below threshold)'}
+                      </p>
                     </div>
-
-                    {/* Stat Badges */}
-                    <div className="grid grid-cols-3 gap-3">
-                      <div className="bg-slate-950/80 border border-emerald-900/60 rounded-2xl p-3.5 text-center">
-                        <span className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold block">
-                          Got It
-                        </span>
-                        <span className="text-2xl font-black text-emerald-400 font-mono">
-                          {latestStats.gotItPercent}%
-                        </span>
-                      </div>
-
-                      <div className="bg-slate-950/80 border border-amber-900/60 rounded-2xl p-3.5 text-center">
-                        <span className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold block">
-                          Kinda
-                        </span>
-                        <span className="text-2xl font-black text-amber-400 font-mono">
-                          {latestStats.kindaPercent}%
-                        </span>
-                      </div>
-
-                      <div className="bg-slate-950/80 border border-rose-900/60 rounded-2xl p-3.5 text-center">
-                        <span className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold block">
-                          Lost
-                        </span>
-                        <span className="text-2xl font-black text-rose-400 font-mono">
-                          {latestStats.lostPercent}%
-                        </span>
-                      </div>
+                    <div className="text-right hidden sm:block">
+                      <span className="eyebrow block mb-0.5">60s WINDOW</span>
+                      <span className="font-mono text-sm text-[#cdc4ba]">
+                        {latestStats.totalInWindow} responses
+                      </span>
                     </div>
                   </div>
-                ) : (
-                  <div className="w-full bg-slate-900/90 border border-emerald-500/40 rounded-3xl p-6 shadow-xl flex flex-col gap-5">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <div className="h-10 w-10 rounded-xl bg-emerald-600/20 border border-emerald-500/30 text-emerald-400 flex items-center justify-center">
-                          <CheckCircle2 className="h-6 w-6" />
-                        </div>
-                        <div>
-                          <h3 className="text-lg sm:text-xl font-bold text-emerald-300">
-                            All Good • Lecture On Track
-                          </h3>
-                          <p className="text-xs text-slate-400">
-                            Confusion score is low at {latestStats.confusionScore}%
-                          </p>
-                        </div>
-                      </div>
-                      <div className="text-right hidden sm:block">
-                        <span className="text-xs uppercase tracking-wider text-slate-500 font-bold block">
-                          60s Window
-                        </span>
-                        <span className="text-sm font-mono text-slate-300">
-                          {latestStats.totalInWindow} responses
-                        </span>
-                      </div>
+
+                  {/* Stat cells */}
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="border border-[#cdc4ba]/15 p-4 text-center">
+                      <span className="eyebrow block mb-1">01 // GOT IT</span>
+                      <span className="font-mono text-2xl font-bold text-[#cdc4ba]">
+                        {latestStats.gotItPercent}%
+                      </span>
                     </div>
-
-                    {/* Stat Badges */}
-                    <div className="grid grid-cols-3 gap-3">
-                      <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-3.5 text-center">
-                        <span className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold block">
-                          Got It
-                        </span>
-                        <span className="text-2xl font-black text-emerald-400 font-mono">
-                          {latestStats.gotItPercent}%
-                        </span>
-                      </div>
-
-                      <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-3.5 text-center">
-                        <span className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold block">
-                          Kinda
-                        </span>
-                        <span className="text-2xl font-black text-amber-400 font-mono">
-                          {latestStats.kindaPercent}%
-                        </span>
-                      </div>
-
-                      <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-3.5 text-center">
-                        <span className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold block">
-                          Lost
-                        </span>
-                        <span className="text-2xl font-black text-rose-400 font-mono">
-                          {latestStats.lostPercent}%
-                        </span>
-                      </div>
+                    <div className="border border-[#cdc4ba]/15 p-4 text-center">
+                      <span className="eyebrow block mb-1">02 // KINDA</span>
+                      <span className="font-mono text-2xl font-bold text-[#cdc4ba]/70">
+                        {latestStats.kindaPercent}%
+                      </span>
+                    </div>
+                    <div className="border border-[#cdc4ba]/15 p-4 text-center">
+                      <span className="eyebrow block mb-1">03 // LOST</span>
+                      <span className={`font-mono text-2xl font-bold ${
+                        isConfusionSpike ? 'text-[#cdc4ba]' : 'text-[#cdc4ba]/40'
+                      }`}>
+                        {latestStats.lostPercent}%
+                      </span>
                     </div>
                   </div>
-                )}
+                </div>
 
-                {/* 2. AI Intervention Panel (Visible only when confusionScore >= 50) */}
+                {/* 04 // AI Intervention Panel */}
                 {isConfusionSpike && (
-                  <div className="w-full bg-slate-900 border-2 border-indigo-500/60 rounded-3xl p-6 shadow-2xl shadow-indigo-950/60 flex flex-col gap-6 animate-in zoom-in-95 duration-300">
-                    <div className="flex items-center justify-between border-b border-slate-800 pb-4">
-                      <div className="flex items-center gap-3">
-                        <div className="h-10 w-10 rounded-2xl bg-indigo-500/20 border border-indigo-500/40 text-indigo-400 flex items-center justify-center">
-                          <Sparkles className="h-6 w-6 animate-spin" style={{ animationDuration: '4s' }} />
+                  <div className="border border-[#cdc4ba]/30 p-6 flex flex-col gap-6 animate-in fade-in duration-200">
+                    <div className="flex items-center justify-between border-b border-[#cdc4ba]/15 pb-4">
+                      <div>
+                        <span className="eyebrow block mb-1">
+                          04 // AI INTERVENTION PROTOCOL
+                        </span>
+                        <div className="flex items-center gap-2 mt-1">
+                          <h3 className="text-base font-medium text-[#cdc4ba]">
+                            Pedagogical Intervention
+                          </h3>
+                          <span className="font-mono text-[10px] border border-[#cdc4ba]/20 text-[#cdc4ba]/40 px-1.5 py-0.5">
+                            GEMINI 2.5 FLASH
+                          </span>
                         </div>
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <h3 className="text-lg font-bold text-white">
-                              AI Lecture Intervention
-                            </h3>
-                            <span className="text-[10px] bg-indigo-500/20 text-indigo-300 font-bold px-2 py-0.5 rounded-full border border-indigo-500/30">
-                              Gemini 2.5 Flash
-                            </span>
-                          </div>
-                          <p className="text-xs text-slate-400">
-                            Auto-generated pedagogical analogy and concept diagnostic for &ldquo;{currentTopic || 'Current Topic'}&rdquo;
-                          </p>
-                        </div>
+                        <p className="font-mono text-[11px] text-[#cdc4ba]/40 mt-1">
+                          Auto-generated analogy &amp; concept diagnostic for &ldquo;{currentTopic || 'Current Topic'}&rdquo;
+                        </p>
                       </div>
 
                       <button
@@ -898,75 +985,60 @@ export default function TeacherView() {
                         onClick={handleRegenerate}
                         disabled={loadingIntervention}
                         title="Regenerate Intervention"
-                        className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors cursor-pointer disabled:opacity-50"
+                        className="p-2 border border-[#cdc4ba]/20 hover:border-[#cdc4ba]/60 hover:bg-[#cdc4ba]/5 text-[#cdc4ba]/50 hover:text-[#cdc4ba] transition-all cursor-pointer disabled:opacity-30"
                       >
                         <RefreshCw className={`h-4 w-4 ${loadingIntervention ? 'animate-spin' : ''}`} />
                       </button>
                     </div>
 
                     {loadingIntervention ? (
-                      <div className="py-12 flex flex-col items-center justify-center gap-3">
-                        <Loader2 className="h-10 w-10 text-indigo-500 animate-spin" />
-                        <p className="text-sm font-medium text-slate-300">
-                          Generating intuitive teaching analogy & diagnostic check...
-                        </p>
+                      <div className="py-10 flex flex-col items-center gap-3">
+                        <Loader2 className="h-8 w-8 text-[#cdc4ba]/40 animate-spin" />
+                        <p className="eyebrow">GENERATING ANALOGY &amp; DIAGNOSTIC</p>
                       </div>
                     ) : intervention ? (
                       <div className="flex flex-col gap-6">
-                        {/* Analogy Quote Card */}
-                        <div className="relative bg-gradient-to-br from-indigo-950/60 to-slate-900 border border-indigo-500/30 rounded-2xl p-6">
-                          <Quote className="absolute top-4 right-4 h-12 w-12 text-indigo-500/10 pointer-events-none" />
-                          <span className="text-[11px] font-bold uppercase tracking-widest text-indigo-400 block mb-2">
-                            Suggested Teaching Analogy
-                          </span>
-                          <p className="text-lg sm:text-xl font-medium text-indigo-100 leading-relaxed italic">
+                        {/* Analogy */}
+                        <div className="border border-[#cdc4ba]/20 p-5">
+                          <span className="eyebrow block mb-3">SUGGESTED TEACHING ANALOGY</span>
+                          <p className="text-base font-normal text-[#cdc4ba]/90 leading-relaxed italic">
                             &ldquo;{intervention.analogy}&rdquo;
                           </p>
                         </div>
 
-                        {/* Diagnostic Question Preview Card */}
-                        <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-5 flex flex-col gap-4">
+                        {/* Diagnostic Preview */}
+                        <div className="border border-[#cdc4ba]/15 p-5 flex flex-col gap-4">
                           <div>
-                            <span className="text-[11px] font-bold uppercase tracking-widest text-slate-400 block mb-1">
-                              Diagnostic Concept Check
-                            </span>
-                            <h4 className="text-base font-semibold text-white">
+                            <span className="eyebrow block mb-2">DIAGNOSTIC CONCEPT CHECK</span>
+                            <h4 className="text-sm font-medium text-[#cdc4ba] leading-snug">
                               {intervention.diagnosticQuestion}
                             </h4>
                           </div>
 
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                            <div className="bg-slate-900 border border-slate-800 rounded-xl p-3.5 flex items-start gap-3">
-                              <span className={`h-6 w-6 rounded-lg font-bold text-xs flex items-center justify-center shrink-0 ${
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <div className="border border-[#cdc4ba]/15 p-3 flex items-start gap-3">
+                              <span className={`font-mono text-xs px-1.5 py-0.5 border shrink-0 ${
                                 intervention.correctOption === 'A'
-                                  ? 'bg-emerald-950 text-emerald-300 border border-emerald-500/30'
-                                  : 'bg-indigo-950 text-indigo-300 border border-indigo-500/30'
-                              }`}>
-                                A
-                              </span>
-                              <div className="text-xs text-slate-300">
-                                <span className={`font-semibold block mb-0.5 ${
-                                  intervention.correctOption === 'A' ? 'text-emerald-300' : 'text-slate-200'
-                                }`}>
-                                  {intervention.correctOption === 'A' ? 'Target Concept:' : 'Misconception:'}
+                                  ? 'border-[#cdc4ba]/60 text-[#cdc4ba]'
+                                  : 'border-[#cdc4ba]/20 text-[#cdc4ba]/40'
+                              }`}>A</span>
+                              <div className="text-xs text-[#cdc4ba]/70">
+                                <span className="font-mono text-[10px] text-[#cdc4ba]/40 block mb-0.5">
+                                  {intervention.correctOption === 'A' ? 'TARGET:' : 'MISCONCEPTION:'}
                                 </span>
                                 {intervention.optionA}
                               </div>
                             </div>
 
-                            <div className="bg-slate-900 border border-slate-800 rounded-xl p-3.5 flex items-start gap-3">
-                              <span className={`h-6 w-6 rounded-lg font-bold text-xs flex items-center justify-center shrink-0 ${
+                            <div className="border border-[#cdc4ba]/15 p-3 flex items-start gap-3">
+                              <span className={`font-mono text-xs px-1.5 py-0.5 border shrink-0 ${
                                 intervention.correctOption === 'B' || !intervention.correctOption
-                                  ? 'bg-emerald-950 text-emerald-300 border border-emerald-500/30'
-                                  : 'bg-indigo-950 text-indigo-300 border border-indigo-500/30'
-                              }`}>
-                                B
-                              </span>
-                              <div className="text-xs text-slate-300">
-                                <span className={`font-semibold block mb-0.5 ${
-                                  intervention.correctOption === 'B' || !intervention.correctOption ? 'text-emerald-300' : 'text-slate-200'
-                                }`}>
-                                  {intervention.correctOption === 'B' || !intervention.correctOption ? 'Target Concept:' : 'Misconception:'}
+                                  ? 'border-[#cdc4ba]/60 text-[#cdc4ba]'
+                                  : 'border-[#cdc4ba]/20 text-[#cdc4ba]/40'
+                              }`}>B</span>
+                              <div className="text-xs text-[#cdc4ba]/70">
+                                <span className="font-mono text-[10px] text-[#cdc4ba]/40 block mb-0.5">
+                                  {intervention.correctOption === 'B' || !intervention.correctOption ? 'TARGET:' : 'MISCONCEPTION:'}
                                 </span>
                                 {intervention.optionB}
                               </div>
@@ -974,50 +1046,49 @@ export default function TeacherView() {
                           </div>
 
                           {intervention.misconceptionIfWrong && (
-                            <div className="text-[11px] text-slate-400 bg-slate-900/50 rounded-lg px-3 py-1.5 border border-slate-800/60">
-                              <span className="font-semibold text-slate-300">Misconception targeted: </span>
+                            <div className="font-mono text-[11px] text-[#cdc4ba]/40 border border-[#cdc4ba]/10 px-3 py-2">
+                              <span className="text-[#cdc4ba]/60">Misconception targeted: </span>
                               {intervention.misconceptionIfWrong}
                             </div>
                           )}
 
-                          {/* Action Button: Push Diagnostic / Dismiss / Live Tally */}
+                          {/* Push Diagnostic / Active Tally */}
                           {isDiagnosticPushed ? (
-                            <div className="pt-2 flex flex-col gap-4 border-t border-slate-800/80">
+                            <div className="flex flex-col gap-4 border-t border-[#cdc4ba]/15 pt-4">
                               <div className="flex items-center justify-between">
-                                <div className="flex items-center gap-2 text-xs font-semibold text-emerald-400">
-                                  <span className="h-2 w-2 rounded-full bg-emerald-400 animate-ping" />
-                                  Diagnostic Active on Student Phones ({totalTally} answers)
+                                <div className="flex items-center gap-2 font-mono text-xs text-[#cdc4ba]">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-[#cdc4ba] animate-ping" />
+                                  DIAGNOSTIC ACTIVE — {totalTally} ANSWERS
                                 </div>
                                 <button
                                   type="button"
                                   onClick={handleDismissDiagnostic}
-                                  className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-red-400 transition-colors cursor-pointer px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-800"
+                                  className="flex items-center gap-1.5 font-mono text-xs text-[#cdc4ba]/40 hover:text-[#cdc4ba] border border-[#cdc4ba]/15 hover:border-[#cdc4ba]/40 px-2.5 py-1 transition-all cursor-pointer"
                                 >
-                                  <X className="h-3.5 w-3.5" />
-                                  <span>Dismiss & Continue Lecture</span>
+                                  <X className="h-3 w-3" />
+                                  DISMISS
                                 </button>
                               </div>
 
-                              {/* Live A vs B Horizontal Split Bar Comparison */}
+                              {/* Split bar */}
                               <div className="w-full flex flex-col gap-2">
-                                <div className="h-7 w-full bg-slate-950 rounded-xl overflow-hidden flex border border-slate-800">
+                                <div className="h-6 w-full bg-[#cdc4ba]/10 overflow-hidden flex border border-[#cdc4ba]/15">
                                   <div
                                     style={{ width: `${percentA}%` }}
-                                    className="bg-indigo-600 h-full flex items-center justify-center text-[11px] font-black text-white transition-all duration-500"
+                                    className="bg-[#cdc4ba]/50 h-full flex items-center justify-center font-mono text-[10px] font-bold text-[#0a0a0a] transition-all duration-500"
                                   >
-                                    {totalTally > 0 && `${percentA}% (A)`}
+                                    {totalTally > 0 && `${percentA}%`}
                                   </div>
                                   <div
                                     style={{ width: `${percentB}%` }}
-                                    className="bg-emerald-600 h-full flex items-center justify-center text-[11px] font-black text-white transition-all duration-500"
+                                    className="bg-[#cdc4ba] h-full flex items-center justify-center font-mono text-[10px] font-bold text-[#0a0a0a] transition-all duration-500"
                                   >
-                                    {totalTally > 0 && `${percentB}% (B)`}
+                                    {totalTally > 0 && `${percentB}%`}
                                   </div>
                                 </div>
-
-                                <div className="flex justify-between text-xs font-mono text-slate-400">
-                                  <span>Option A: {tallyA} students</span>
-                                  <span>Option B: {tallyB} students</span>
+                                <div className="flex justify-between font-mono text-[10px] text-[#cdc4ba]/40">
+                                  <span>A: {tallyA} students</span>
+                                  <span>B: {tallyB} students</span>
                                 </div>
                               </div>
                             </div>
@@ -1025,10 +1096,10 @@ export default function TeacherView() {
                             <button
                               type="button"
                               onClick={handlePushDiagnostic}
-                              className="mt-2 w-full py-3.5 bg-indigo-600 hover:bg-indigo-500 active:scale-[0.99] text-white font-bold rounded-xl flex items-center justify-center gap-2.5 shadow-lg shadow-indigo-600/30 transition-all cursor-pointer"
+                              className="w-full py-3 border border-[#cdc4ba]/30 hover:border-[#cdc4ba] hover:bg-[#cdc4ba]/5 text-[#cdc4ba] font-mono text-xs flex items-center justify-center gap-2 transition-all cursor-pointer"
                             >
-                              <Send className="h-4 w-4" />
-                              <span>Push Diagnostic to Class</span>
+                              <Send className="h-3.5 w-3.5" />
+                              PUSH DIAGNOSTIC TO CLASS
                             </button>
                           )}
                         </div>
@@ -1037,58 +1108,53 @@ export default function TeacherView() {
                   </div>
                 )}
 
-                {/* 3. Live Comprehension Retention Curve (Recharts) */}
-                <div className="w-full bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-xl flex flex-col gap-4">
-                  <div className="flex items-center justify-between pb-2 border-b border-slate-800">
-                    <div className="flex items-center gap-2.5">
-                      <TrendingUp className="h-5 w-5 text-indigo-400" />
-                      <div>
-                        <h4 className="text-base font-bold text-white">
-                          Live Comprehension Retention Curve
-                        </h4>
-                        <p className="text-xs text-slate-400">
-                          Confusion Score history (last 30 ticks, updated every 2s)
-                        </p>
-                      </div>
+                {/* Live Comprehension Curve */}
+                <div className="border border-[#cdc4ba]/15 p-6 flex flex-col gap-4">
+                  <div className="flex items-center justify-between border-b border-[#cdc4ba]/15 pb-3">
+                    <div>
+                      <span className="eyebrow block mb-1">LIVE COMPREHENSION CURVE</span>
+                      <p className="font-mono text-[11px] text-[#cdc4ba]/40">
+                        Confusion score history (last 30 ticks, updated every 2s)
+                      </p>
                     </div>
-                    <div className="flex items-center gap-2 text-xs text-slate-400 font-medium">
-                      <Activity className="h-4 w-4 text-indigo-400 animate-pulse" />
-                      <span>Live Stream</span>
+                    <div className="flex items-center gap-1.5 font-mono text-xs text-[#cdc4ba]/40">
+                      <Activity className="h-3.5 w-3.5 animate-pulse" />
+                      LIVE
                     </div>
                   </div>
 
-                  {/* Chart Container */}
-                  <div className="w-full h-64 sm:h-72 pt-4">
+                  <div className="w-full h-56 sm:h-64 pt-2">
                     <ResponsiveContainer width="100%" height="100%">
                       <LineChart
                         data={history.length > 0 ? history : [{ index: 0, score: 0, time: '' }]}
-                        margin={{ top: 10, right: 10, left: -20, bottom: 0 }}
+                        margin={{ top: 8, right: 8, left: -24, bottom: 0 }}
                       >
                         <YAxis
                           domain={[0, 100]}
-                          tick={{ fill: '#94a3b8', fontSize: 11 }}
-                          tickLine={{ stroke: '#334155' }}
-                          axisLine={{ stroke: '#334155' }}
+                          tick={{ fill: 'rgba(205,196,186,0.4)', fontSize: 10, fontFamily: 'JetBrains Mono, monospace' }}
+                          tickLine={{ stroke: 'rgba(205,196,186,0.1)' }}
+                          axisLine={{ stroke: 'rgba(205,196,186,0.1)' }}
                           ticks={[0, 25, 50, 75, 100]}
                         />
                         <Tooltip
                           contentStyle={{
-                            backgroundColor: '#0f172a',
-                            borderColor: '#334155',
-                            borderRadius: '0.75rem',
-                            fontSize: '12px',
-                            color: '#fff',
+                            backgroundColor: '#0d0d0d',
+                            borderColor: 'rgba(205,196,186,0.2)',
+                            borderRadius: '2px',
+                            fontSize: '11px',
+                            color: '#cdc4ba',
+                            fontFamily: 'JetBrains Mono, monospace',
                           }}
-                          formatter={(value) => [`${value}%`, 'Confusion Score']}
+                          formatter={(value) => [`${value}%`, 'Confusion']}
                           labelFormatter={(label) => `Tick ${label}`}
                         />
                         <Line
                           type="monotone"
                           dataKey="score"
                           stroke={chartStrokeColor}
-                          strokeWidth={3}
+                          strokeWidth={1.5}
                           dot={false}
-                          activeDot={{ r: 6, fill: chartStrokeColor }}
+                          activeDot={{ r: 3, fill: '#cdc4ba', strokeWidth: 0 }}
                           isAnimationActive={false}
                         />
                       </LineChart>
@@ -1098,21 +1164,37 @@ export default function TeacherView() {
               </section>
             ) : (
               /* Waiting for signals placeholder */
-              <div className="w-full max-w-md p-6 rounded-3xl bg-slate-900/60 border border-slate-800/80 text-center flex flex-col items-center gap-3">
-                <Activity className="h-6 w-6 text-slate-500 animate-pulse" />
-                <div>
-                  <p className="text-sm font-semibold text-slate-300">
-                    Waiting for student responses...
-                  </p>
-                  <p className="text-xs text-slate-500 mt-1">
-                    The live comprehension dashboard and AI intervention will automatically appear as soon as students submit their first feedback signal.
+              <section className="flex flex-col gap-6">
+                <div className="border-b border-[#cdc4ba]/15 pb-4">
+                  <span className="eyebrow block mb-1">03 // TELEMETRY &amp; LIVE PULSE</span>
+                  <h2 className="text-xl font-normal tracking-tight text-[#cdc4ba]">
+                    Awaiting Signals
+                  </h2>
+                </div>
+                <div className="border border-[#cdc4ba]/15 p-8 flex flex-col items-center gap-3 text-center">
+                  <Activity className="h-5 w-5 text-[#cdc4ba]/20 animate-pulse" />
+                  <p className="font-mono text-xs text-[#cdc4ba]/40">
+                    The live comprehension dashboard and AI intervention will appear<br />
+                    as soon as students submit their first feedback signal.
                   </p>
                 </div>
-              </div>
+              </section>
             )}
           </div>
         )}
       </main>
+
+      {/* ── Footer ─────────────────────────────────────────── */}
+      <footer className="border-t border-[#cdc4ba]/10 px-6 sm:px-10 py-4 flex items-center justify-between">
+        <span className="font-mono text-[10px] text-[#cdc4ba]/30 tracking-wider">
+          CLASSPULSE // TEACHER DOSSIER
+        </span>
+        {roomId && (
+          <span className="font-mono text-[10px] text-[#cdc4ba]/30">
+            SESSION {roomId}
+          </span>
+        )}
+      </footer>
     </div>
   );
 }

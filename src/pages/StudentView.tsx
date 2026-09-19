@@ -262,8 +262,8 @@ export default function StudentView() {
   // Check if current active diagnostic was already answered by this student
   const activeDiagnosticKey = activeDiagnostic
     ? activeDiagnostic.id ||
-      activeDiagnostic.question ||
-      JSON.stringify(activeDiagnostic)
+    activeDiagnostic.question ||
+    JSON.stringify(activeDiagnostic)
     : null;
 
   const showDiagnostic =
@@ -438,13 +438,12 @@ export default function StudentView() {
                 onPointerUp={handlePointerUp}
                 onPointerLeave={handlePointerLeave}
                 onPointerCancel={handlePointerCancel}
-                className={`w-full h-24 sm:h-28 rounded-3xl font-extrabold text-white flex items-center justify-between px-7 shadow-xl transition-all select-none touch-none cursor-pointer overflow-hidden ${
-                  cooldownRemaining > 0
-                    ? 'bg-rose-950/40 opacity-40 pointer-events-none'
-                    : isHolding
+                className={`w-full h-24 sm:h-28 rounded-3xl font-extrabold text-white flex items-center justify-between px-7 shadow-xl transition-all select-none touch-none cursor-pointer overflow-hidden ${cooldownRemaining > 0
+                  ? 'bg-rose-950/40 opacity-40 pointer-events-none'
+                  : isHolding
                     ? 'bg-rose-700 scale-[0.99] shadow-rose-600/30'
                     : 'bg-rose-600 hover:bg-rose-500 active:bg-rose-700'
-                }`}
+                  }`}
                 style={{ WebkitTouchCallout: 'none', userSelect: 'none' }}
               >
                 <div className="flex items-center gap-4 z-10">
