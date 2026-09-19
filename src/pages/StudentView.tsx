@@ -1,15 +1,14 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import {
-  CheckCircle,
+  CheckCircle2,
   HelpCircle,
   AlertTriangle,
   Clock,
-  Sparkles,
   ArrowLeft,
-  ThumbsUp,
-  Meh,
-  Frown,
+  Check,
+  Power,
+  Activity,
 } from 'lucide-react';
 import {
   db,
@@ -40,7 +39,9 @@ export default function StudentView() {
   const [cooldownRemaining, setCooldownRemaining] = useState<number>(0);
   const cooldownTimerRef = useRef<number | null>(null);
 
-  // Firestore session data & diagnostic question
+  // Firestore session data, active topic & diagnostic question
+  const [currentTopic, setCurrentTopic] = useState<string>('');
+  const [isSessionEnded, setIsSessionEnded] = useState(false);
   const [activeDiagnostic, setActiveDiagnostic] = useState<DiagnosticQuestion | null>(null);
   const [answeredDiagnostics, setAnsweredDiagnostics] = useState<Set<string>>(new Set());
   const [submittingDiagnostic, setSubmittingDiagnostic] = useState(false);
@@ -52,15 +53,12 @@ export default function StudentView() {
   const holdStartTimeRef = useRef<number | null>(null);
   const holdAnimationRef = useRef<number | null>(null);
   const hasTriggeredHoldRef = useRef(false);
-  // Tracks which pointer (finger/mouse) currently owns the hold gesture,
-  // so a second touch landing on the button mid-hold can't cancel or
-  // complete a hold it didn't start.
   const activeHoldPointerIdRef = useRef<number | null>(null);
 
   // Status feedback toast/banner
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
 
-  // Listen to the session document for diagnosticQuestion
+  // Listen to the session document for status, topic, and diagnosticQuestion
   useEffect(() => {
     if (!roomId) return;
 
@@ -70,18 +68,25 @@ export default function StudentView() {
       (docSnap) => {
         if (docSnap.exists()) {
           const data = docSnap.data();
-          if (data && data.diagnosticQuestion) {
-            if (typeof data.diagnosticQuestion === 'string') {
-              setActiveDiagnostic({
-                question: data.diagnosticQuestion,
-                optionA: data.optionA || 'Option A',
-                optionB: data.optionB || 'Option B',
-              });
-            } else {
-              setActiveDiagnostic(data.diagnosticQuestion as DiagnosticQuestion);
+          if (data) {
+            setIsSessionEnded(data.status === 'ended');
+            if (data.currentTopic !== undefined) {
+              setCurrentTopic(data.currentTopic || '');
             }
-          } else {
-            setActiveDiagnostic(null);
+
+            if (data.diagnosticQuestion) {
+              if (typeof data.diagnosticQuestion === 'string') {
+                setActiveDiagnostic({
+                  question: data.diagnosticQuestion,
+                  optionA: data.optionA || 'Option A',
+                  optionB: data.optionB || 'Option B',
+                });
+              } else {
+                setActiveDiagnostic(data.diagnosticQuestion as DiagnosticQuestion);
+              }
+            } else {
+              setActiveDiagnostic(null);
+            }
           }
         } else {
           setActiveDiagnostic(null);
@@ -95,9 +100,7 @@ export default function StudentView() {
     return () => unsubscribe();
   }, [roomId]);
 
-  // Make sure an in-flight hold animation can't keep running (and calling
-  // setState / sendSignal) after this component unmounts, e.g. if the
-  // student navigates away mid-hold.
+  // Cleanup in-flight hold animation on unmount
   useEffect(() => {
     return () => {
       if (holdAnimationRef.current) {
@@ -124,15 +127,18 @@ export default function StudentView() {
   // Send Signal to subcollection "sessions/{roomId}/signals"
   const sendSignal = useCallback(
     async (value: SignalType) => {
-      if (!roomId || cooldownRemaining > 0) return;
+      if (!roomId || cooldownRemaining > 0 || isSessionEnded) return;
 
       try {
-        // Start 30s cooldown immediately
         setCooldownRemaining(30);
 
         const label =
-          value === 'got_it' ? 'Got It' : value === 'kinda' ? 'Kinda' : 'Lost';
-        setFeedbackMessage(`Sent: ${label}`);
+          value === 'got_it'
+            ? '01 // GOT IT'
+            : value === 'kinda'
+              ? '02 // KINDA'
+              : '03 // LOST';
+        setFeedbackMessage(`SIGNAL RECORDED: ${label}`);
         setTimeout(() => setFeedbackMessage(null), 3000);
 
         await addDoc(collection(db, 'sessions', roomId, 'signals'), {
@@ -143,7 +149,7 @@ export default function StudentView() {
         console.error('Failed to submit signal:', err);
       }
     },
-    [roomId, cooldownRemaining]
+    [roomId, cooldownRemaining, isSessionEnded]
   );
 
   // Hold Logic for "Lost" Button
@@ -160,29 +166,17 @@ export default function StudentView() {
   }, []);
 
   const handlePointerDown = (e: React.PointerEvent<HTMLButtonElement>) => {
-    if (cooldownRemaining > 0) return;
-    // Only handle primary pointer (e.g. left click or single touch), and
-    // ignore a second finger landing on the button while a hold is
-    // already in progress from a different pointer.
+    if (cooldownRemaining > 0 || isSessionEnded) return;
     if (e.button !== 0) return;
     if (activeHoldPointerIdRef.current !== null) return;
 
     cancelHold();
     activeHoldPointerIdRef.current = e.pointerId;
 
-    // Explicitly capture the pointer to this button. Without this, some
-    // browsers stop delivering pointermove/pointerup to the button (or
-    // fire pointerleave) as soon as a touch drifts even slightly outside
-    // its bounds, which made the hold cancel unreliably depending on the
-    // device. Capturing keeps every subsequent event for this pointer
-    // routed here until pointerup/pointercancel, regardless of where the
-    // finger physically is.
     try {
       e.currentTarget.setPointerCapture(e.pointerId);
     } catch {
-      // Pointer capture isn't available in every environment (e.g. some
-      // test/browser combos) - the hold still works, just falls back to
-      // relying on pointerleave for off-button cancellation.
+      // Fallback if setPointerCapture is unsupported
     }
 
     setIsHolding(true);
@@ -218,10 +212,6 @@ export default function StudentView() {
 
   const handlePointerLeave = (e: React.PointerEvent<HTMLButtonElement>) => {
     if (e.pointerId !== activeHoldPointerIdRef.current) return;
-    // With setPointerCapture in place, pointerleave now reliably means
-    // "this pointer physically left the button" rather than firing early
-    // due to touch hit-testing quirks - so cancelling here is safe and
-    // predictable across browsers.
     if (!hasTriggeredHoldRef.current) {
       cancelHold();
     }
@@ -234,7 +224,7 @@ export default function StudentView() {
 
   // Submit diagnostic answer
   const handleDiagnosticAnswer = async (choice: 'A' | 'B') => {
-    if (!roomId || !activeDiagnostic || submittingDiagnostic) return;
+    if (!roomId || !activeDiagnostic || submittingDiagnostic || isSessionEnded) return;
 
     try {
       setSubmittingDiagnostic(true);
@@ -248,9 +238,8 @@ export default function StudentView() {
         timestamp: serverTimestamp(),
       });
 
-      // Mark this diagnostic question as answered so view reverts to default
       setAnsweredDiagnostics((prev) => new Set(prev).add(diagnosticKey));
-      setFeedbackMessage(`Option ${choice} submitted!`);
+      setFeedbackMessage(`RESPONSE RECORDED: OPTION ${choice}`);
       setTimeout(() => setFeedbackMessage(null), 3000);
     } catch (err) {
       console.error('Failed to submit diagnostic response:', err);
@@ -262,8 +251,8 @@ export default function StudentView() {
   // Check if current active diagnostic was already answered by this student
   const activeDiagnosticKey = activeDiagnostic
     ? activeDiagnostic.id ||
-    activeDiagnostic.question ||
-    JSON.stringify(activeDiagnostic)
+      activeDiagnostic.question ||
+      JSON.stringify(activeDiagnostic)
     : null;
 
   const showDiagnostic =
@@ -272,7 +261,7 @@ export default function StudentView() {
     !answeredDiagnostics.has(activeDiagnosticKey);
 
   // Circular progress math for SVG ring
-  const circleRadius = 36;
+  const circleRadius = 26;
   const circumference = 2 * Math.PI * circleRadius;
   const strokeDashoffset =
     circumference - (holdProgress / 100) * circumference;
@@ -291,217 +280,366 @@ export default function StudentView() {
     activeDiagnostic?.question ||
     activeDiagnostic?.prompt ||
     activeDiagnostic?.title ||
-    'Quick Diagnostic Question';
+    'Concept Diagnostic Question';
 
   return (
-    <div className="min-h-screen w-full flex flex-col bg-slate-950 text-white select-none overflow-x-hidden">
-      {/* Top Navigation Bar */}
-      <header className="px-5 py-4 flex items-center justify-between border-b border-slate-900/80 bg-slate-950/60 backdrop-blur-md sticky top-0 z-20">
-        <Link
-          to="/"
-          className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white transition-colors"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          <span>Exit</span>
-        </Link>
-        <div className="flex items-center gap-2">
-          <div className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
-          <span className="font-mono text-xs font-semibold tracking-wider text-slate-300">
-            ROOM: {roomId || '---'}
-          </span>
+    <div className="min-h-screen w-full flex flex-col bg-[#0a0a0a] text-[#cdc4ba]">
+      {/* ── Header ─────────────────────────────────────────────── */}
+      <header className="w-full px-6 sm:px-10 py-4 flex items-center justify-between border-b border-[#cdc4ba]/15 bg-[#0a0a0a] sticky top-0 z-30">
+        <div className="flex items-center gap-4">
+          <Link
+            to="/"
+            className="flex items-center gap-1.5 border border-[#cdc4ba]/20 hover:border-[#cdc4ba]/60 hover:bg-[#cdc4ba]/5 text-[#cdc4ba]/60 hover:text-[#cdc4ba] font-mono text-xs px-2.5 py-1.5 transition-all cursor-pointer"
+            title="Exit Session"
+          >
+            <ArrowLeft className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">EXIT</span>
+          </Link>
+          <div>
+            <h1 className="text-sm font-semibold tracking-tight text-[#cdc4ba]">CLASSPULSE</h1>
+            <span className="eyebrow">STUDENT TERMINAL</span>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 sm:gap-3">
+          {/* Status Badge */}
+          <div className="flex items-center gap-1.5 border border-[#cdc4ba]/20 px-3 py-1.5 font-mono text-xs text-[#cdc4ba]/70">
+            <span
+              className={`w-1.5 h-1.5 rounded-full ${
+                isSessionEnded ? 'bg-[#cdc4ba]/30' : 'bg-[#cdc4ba] animate-pulse'
+              }`}
+            />
+            <span>{isSessionEnded ? 'CONCLUDED' : 'LIVE'}</span>
+          </div>
+
+          {/* Room ID Badge */}
+          <div className="flex items-center gap-1.5 border border-[#cdc4ba]/15 px-3 py-1.5 font-mono text-xs text-[#cdc4ba]/70">
+            <span className="text-[#cdc4ba]/40 hidden xs:inline">ROOM:</span>
+            <span className="text-[#cdc4ba] font-bold tracking-wider">{roomId || '---'}</span>
+          </div>
         </div>
       </header>
 
-      {/* Main Content Area */}
-      <main className="flex-1 max-w-md w-full mx-auto p-5 flex flex-col justify-center">
-        {/* Feedback Banner */}
+      {/* ── Main ───────────────────────────────────────────────── */}
+      <main className="w-full max-w-xl mx-auto flex-1 flex flex-col px-5 sm:px-8 py-8 sm:py-12 gap-8">
+        {/* Feedback Transmission Banner */}
         {feedbackMessage && (
-          <div className="mb-4 py-2.5 px-4 rounded-xl bg-indigo-600/90 text-white text-center text-sm font-medium shadow-lg animate-in fade-in slide-in-from-top-2 duration-200">
-            {feedbackMessage}
+          <div className="border border-[#cdc4ba]/40 bg-[#cdc4ba]/10 px-4 py-3 font-mono text-xs text-[#cdc4ba] flex items-center justify-between gap-3 animate-in fade-in duration-150">
+            <div className="flex items-center gap-2">
+              <Check className="h-4 w-4 text-[#cdc4ba]" />
+              <span>{feedbackMessage}</span>
+            </div>
+            <span className="text-[10px] text-[#cdc4ba]/40 uppercase tracking-wider font-mono">
+              TRANSMITTED
+            </span>
           </div>
         )}
 
-        {/* Diagnostic Question Mode */}
-        {showDiagnostic ? (
-          <div className="w-full bg-slate-900 border-2 border-indigo-500/40 rounded-3xl p-6 shadow-2xl shadow-indigo-500/10 flex flex-col items-center text-center animate-in zoom-in-95 duration-200">
-            <div className="h-12 w-12 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 flex items-center justify-center mb-4">
-              <Sparkles className="h-6 w-6 animate-pulse" />
+        {/* Rate Limit Active Notice */}
+        {cooldownRemaining > 0 && !isSessionEnded && (
+          <div className="border border-[#cdc4ba]/20 bg-[#cdc4ba]/5 p-3.5 flex items-center justify-between font-mono text-xs text-[#cdc4ba]/70 animate-in fade-in">
+            <div className="flex items-center gap-2">
+              <Clock className="h-3.5 w-3.5 text-[#cdc4ba]/50 animate-spin" />
+              <span>TRANSMISSION THROTTLED</span>
+            </div>
+            <span className="font-mono text-[11px] text-[#cdc4ba]/50 border border-[#cdc4ba]/15 px-2 py-0.5">
+              RESUMES IN {cooldownRemaining}S
+            </span>
+          </div>
+        )}
+
+        {/* Session Concluded State */}
+        {isSessionEnded ? (
+          <div className="border border-[#cdc4ba]/20 p-8 sm:p-12 flex flex-col items-center gap-4 text-center bg-[#0d0d0d] my-auto">
+            <Power className="h-8 w-8 text-[#cdc4ba]/30" />
+            <span className="eyebrow">SESSION CONCLUDED</span>
+            <h2 className="text-xl font-normal tracking-tight text-[#cdc4ba]">
+              Lecture Completed
+            </h2>
+            <p className="font-mono text-xs text-[#cdc4ba]/50 max-w-sm">
+              The instructor has concluded this session. Responses are no longer being recorded for room {roomId}.
+            </p>
+            <Link
+              to="/"
+              className="mt-2 border border-[#cdc4ba]/30 hover:border-[#cdc4ba] hover:bg-[#cdc4ba]/5 text-[#cdc4ba] font-mono text-xs px-4 py-2 transition-all cursor-pointer"
+            >
+              RETURN TO OVERVIEW
+            </Link>
+          </div>
+        ) : showDiagnostic ? (
+          /* ────────────── DIAGNOSTIC QUESTION MODE ────────────── */
+          <section className="flex flex-col gap-6 animate-in fade-in duration-200">
+            <div className="border-b border-[#cdc4ba]/15 pb-4">
+              <span className="eyebrow block mb-1">02 // CONCEPT DIAGNOSTIC</span>
+              <div className="flex items-center gap-2 mt-1">
+                <h2 className="text-xl font-normal tracking-tight text-[#cdc4ba]">
+                  Instructor Concept Check
+                </h2>
+                <span className="font-mono text-[10px] border border-[#cdc4ba]/30 bg-[#cdc4ba]/10 text-[#cdc4ba] px-2 py-0.5 animate-pulse">
+                  ACTION REQUIRED
+                </span>
+              </div>
+              <p className="font-mono text-[11px] text-[#cdc4ba]/40 mt-1">
+                Select an option below to submit your response to the live dossier
+              </p>
             </div>
 
-            <span className="text-xs uppercase tracking-widest text-indigo-400 font-bold mb-2">
-              Teacher Asked
-            </span>
-            <h2 className="text-xl font-bold text-white mb-6 leading-snug">
-              {questionTitle}
-            </h2>
+            {/* Question Container */}
+            <div className="border border-[#cdc4ba]/20 p-5 sm:p-6 bg-[#0d0d0d] flex flex-col gap-3">
+              <span className="eyebrow">DIAGNOSTIC QUESTION</span>
+              <h3 className="text-base sm:text-lg font-medium text-[#cdc4ba] leading-relaxed">
+                {questionTitle}
+              </h3>
+            </div>
 
-            <div className="w-full flex flex-col gap-4">
-              {/* Option A Button */}
+            {/* Choices A & B */}
+            <div className="flex flex-col gap-3">
+              {/* Option A */}
               <button
                 type="button"
                 disabled={submittingDiagnostic}
                 onClick={() => handleDiagnosticAnswer('A')}
-                className="w-full min-h-[72px] p-4 bg-indigo-600 hover:bg-indigo-500 active:scale-[0.98] disabled:opacity-50 text-white rounded-2xl font-bold text-lg flex items-center justify-start gap-4 transition-all shadow-lg shadow-indigo-600/20 cursor-pointer text-left"
+                className="w-full p-4 sm:p-5 border border-[#cdc4ba]/20 hover:border-[#cdc4ba]/70 hover:bg-[#cdc4ba]/5 active:bg-[#cdc4ba]/10 disabled:opacity-40 text-left transition-all cursor-pointer flex items-start gap-4 group bg-[#0d0d0d]"
               >
-                <div className="h-10 w-10 shrink-0 rounded-xl bg-indigo-950/60 border border-indigo-400/30 flex items-center justify-center text-base font-extrabold text-indigo-200">
+                <span className="font-mono text-xs px-2.5 py-1 border border-[#cdc4ba]/40 group-hover:border-[#cdc4ba] text-[#cdc4ba] group-hover:bg-[#cdc4ba]/10 shrink-0">
                   A
+                </span>
+                <div className="flex-1">
+                  <span className="eyebrow block mb-1 group-hover:text-[#cdc4ba]/60">
+                    OPTION A
+                  </span>
+                  <p className="text-sm sm:text-base text-[#cdc4ba]/90 group-hover:text-[#cdc4ba] leading-relaxed">
+                    {optionAText}
+                  </p>
                 </div>
-                <span className="flex-1 break-words leading-tight">{optionAText}</span>
               </button>
 
-              {/* Option B Button */}
+              {/* Option B */}
               <button
                 type="button"
                 disabled={submittingDiagnostic}
                 onClick={() => handleDiagnosticAnswer('B')}
-                className="w-full min-h-[72px] p-4 bg-slate-800 hover:bg-slate-700 active:scale-[0.98] disabled:opacity-50 border border-slate-700 text-white rounded-2xl font-bold text-lg flex items-center justify-start gap-4 transition-all shadow-lg cursor-pointer text-left"
+                className="w-full p-4 sm:p-5 border border-[#cdc4ba]/20 hover:border-[#cdc4ba]/70 hover:bg-[#cdc4ba]/5 active:bg-[#cdc4ba]/10 disabled:opacity-40 text-left transition-all cursor-pointer flex items-start gap-4 group bg-[#0d0d0d]"
               >
-                <div className="h-10 w-10 shrink-0 rounded-xl bg-slate-900 border border-slate-600 flex items-center justify-center text-base font-extrabold text-slate-200">
+                <span className="font-mono text-xs px-2.5 py-1 border border-[#cdc4ba]/40 group-hover:border-[#cdc4ba] text-[#cdc4ba] group-hover:bg-[#cdc4ba]/10 shrink-0">
                   B
+                </span>
+                <div className="flex-1">
+                  <span className="eyebrow block mb-1 group-hover:text-[#cdc4ba]/60">
+                    OPTION B
+                  </span>
+                  <p className="text-sm sm:text-base text-[#cdc4ba]/90 group-hover:text-[#cdc4ba] leading-relaxed">
+                    {optionBText}
+                  </p>
                 </div>
-                <span className="flex-1 break-words leading-tight">{optionBText}</span>
               </button>
             </div>
 
-            <p className="text-xs text-slate-400 mt-6">
-              Select one option to submit your response
+            <p className="font-mono text-[11px] text-[#cdc4ba]/30 text-center">
+              Your response is recorded into the session metrics for immediate review.
             </p>
-          </div>
+          </section>
         ) : (
-          /* Default 3-Button Pulse Mode */
-          <div className="w-full flex flex-col gap-4">
-            <div className="text-center mb-2">
-              <h2 className="text-2xl font-black tracking-tight text-white">
-                How's the pace?
+          /* ────────────── COMPREHENSION PULSE MODE ────────────── */
+          <section className="flex flex-col gap-6">
+            <div className="border-b border-[#cdc4ba]/15 pb-4">
+              <span className="eyebrow block mb-1">01 // COMPREHENSION TELEMETRY</span>
+              <h2 className="text-xl font-normal tracking-tight text-[#cdc4ba]">
+                Lecture Comprehension Pulse
               </h2>
-              <p className="text-xs text-slate-400 mt-1">
-                Tap to give real-time feedback to your instructor
+              <p className="font-mono text-[11px] text-[#cdc4ba]/40 mt-1">
+                Select your comprehension status to inform the instructor in real-time
               </p>
             </div>
 
-            {/* Rate Limiting Notice / Timer */}
-            {cooldownRemaining > 0 && (
-              <div className="py-2 px-4 rounded-xl bg-slate-900/90 border border-slate-800 flex items-center justify-center gap-2 text-indigo-400 text-xs font-semibold animate-in fade-in">
-                <Clock className="h-4 w-4 animate-spin" />
-                <span>You can respond again in {cooldownRemaining}s</span>
+            {/* Current Topic Context Card (if present) */}
+            {currentTopic && (
+              <div className="border border-[#cdc4ba]/15 p-4 flex items-center justify-between bg-[#0d0d0d]">
+                <div className="truncate mr-3">
+                  <span className="eyebrow block mb-0.5">CURRENT TOPIC</span>
+                  <p className="font-mono text-xs text-[#cdc4ba] truncate">
+                    {currentTopic}
+                  </p>
+                </div>
+                <Activity className="h-3.5 w-3.5 text-[#cdc4ba]/40 animate-pulse shrink-0" />
               </div>
             )}
 
-            {/* Button 1: "Got It" (Green) */}
-            <button
-              type="button"
-              disabled={cooldownRemaining > 0}
-              onClick={() => sendSignal('got_it')}
-              className="w-full h-24 sm:h-28 bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 active:scale-[0.98] disabled:opacity-40 disabled:pointer-events-none text-white rounded-3xl font-extrabold text-2xl flex items-center justify-between px-7 shadow-xl shadow-emerald-950/40 transition-all cursor-pointer"
-            >
-              <div className="flex items-center gap-4">
-                <div className="h-12 w-12 rounded-2xl bg-emerald-700/60 flex items-center justify-center">
-                  <ThumbsUp className="h-7 w-7 text-emerald-100" />
-                </div>
-                <div className="text-left">
-                  <div className="text-2xl sm:text-3xl leading-none">Got It</div>
-                  <div className="text-xs text-emerald-200/80 font-normal mt-1">
-                    Clear & following well
-                  </div>
-                </div>
-              </div>
-              <CheckCircle className="h-6 w-6 text-emerald-300 opacity-60" />
-            </button>
-
-            {/* Button 2: "Kinda" (Yellow/Amber) */}
-            <button
-              type="button"
-              disabled={cooldownRemaining > 0}
-              onClick={() => sendSignal('kinda')}
-              className="w-full h-24 sm:h-28 bg-amber-600 hover:bg-amber-500 active:bg-amber-700 active:scale-[0.98] disabled:opacity-40 disabled:pointer-events-none text-white rounded-3xl font-extrabold text-2xl flex items-center justify-between px-7 shadow-xl shadow-amber-950/40 transition-all cursor-pointer"
-            >
-              <div className="flex items-center gap-4">
-                <div className="h-12 w-12 rounded-2xl bg-amber-700/60 flex items-center justify-center">
-                  <Meh className="h-7 w-7 text-amber-100" />
-                </div>
-                <div className="text-left">
-                  <div className="text-2xl sm:text-3xl leading-none">Kinda</div>
-                  <div className="text-xs text-amber-200/80 font-normal mt-1">
-                    Slightly shaky on concepts
-                  </div>
-                </div>
-              </div>
-              <HelpCircle className="h-6 w-6 text-amber-300 opacity-60" />
-            </button>
-
-            {/* Button 3: "Lost" (Red with 1.2s Hold Confirmation & SVG Progress Ring) */}
-            <div className="relative w-full">
+            {/* Three Signal Buttons */}
+            <div className="flex flex-col gap-3.5">
+              {/* Button 1: GOT IT */}
               <button
                 type="button"
                 disabled={cooldownRemaining > 0}
-                onPointerDown={handlePointerDown}
-                onPointerUp={handlePointerUp}
-                onPointerLeave={handlePointerLeave}
-                onPointerCancel={handlePointerCancel}
-                className={`w-full h-24 sm:h-28 rounded-3xl font-extrabold text-white flex items-center justify-between px-7 shadow-xl transition-all select-none touch-none cursor-pointer overflow-hidden ${cooldownRemaining > 0
-                  ? 'bg-rose-950/40 opacity-40 pointer-events-none'
-                  : isHolding
-                    ? 'bg-rose-700 scale-[0.99] shadow-rose-600/30'
-                    : 'bg-rose-600 hover:bg-rose-500 active:bg-rose-700'
-                  }`}
-                style={{ WebkitTouchCallout: 'none', userSelect: 'none' }}
+                onClick={() => sendSignal('got_it')}
+                className="w-full border border-[#cdc4ba]/20 hover:border-[#cdc4ba]/70 hover:bg-[#cdc4ba]/5 active:bg-[#cdc4ba]/10 disabled:opacity-30 disabled:pointer-events-none p-5 text-left transition-all cursor-pointer bg-[#0d0d0d] flex items-center justify-between group"
               >
-                <div className="flex items-center gap-4 z-10">
-                  <div className="h-12 w-12 rounded-2xl bg-rose-700/60 flex items-center justify-center">
-                    <Frown className="h-7 w-7 text-rose-100" />
+                <div className="flex items-center gap-4">
+                  <div className="h-10 w-10 border border-[#cdc4ba]/20 group-hover:border-[#cdc4ba]/50 flex items-center justify-center shrink-0 font-mono text-xs text-[#cdc4ba]/60 group-hover:text-[#cdc4ba]">
+                    01
                   </div>
-                  <div className="text-left">
-                    <div className="text-2xl sm:text-3xl leading-none">Lost</div>
-                    <div className="text-xs text-rose-200/80 font-normal mt-1">
-                      {isHolding ? 'Keep holding...' : 'Press & hold 1.2s'}
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-mono text-lg font-semibold tracking-wider text-[#cdc4ba]">
+                        GOT IT
+                      </h3>
+                      <span className="font-mono text-[10px] text-[#cdc4ba]/40 border border-[#cdc4ba]/15 px-1.5 py-0.5">
+                        NOMINAL
+                      </span>
+                    </div>
+                    <p className="font-mono text-xs text-[#cdc4ba]/40 mt-0.5">
+                      Concept is clear · following along comfortably
+                    </p>
+                  </div>
+                </div>
+                <CheckCircle2 className="h-5 w-5 text-[#cdc4ba]/30 group-hover:text-[#cdc4ba]/70 transition-colors shrink-0" />
+              </button>
+
+              {/* Button 2: KINDA */}
+              <button
+                type="button"
+                disabled={cooldownRemaining > 0}
+                onClick={() => sendSignal('kinda')}
+                className="w-full border border-[#cdc4ba]/20 hover:border-[#cdc4ba]/70 hover:bg-[#cdc4ba]/5 active:bg-[#cdc4ba]/10 disabled:opacity-30 disabled:pointer-events-none p-5 text-left transition-all cursor-pointer bg-[#0d0d0d] flex items-center justify-between group"
+              >
+                <div className="flex items-center gap-4">
+                  <div className="h-10 w-10 border border-[#cdc4ba]/20 group-hover:border-[#cdc4ba]/50 flex items-center justify-center shrink-0 font-mono text-xs text-[#cdc4ba]/60 group-hover:text-[#cdc4ba]">
+                    02
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-mono text-lg font-semibold tracking-wider text-[#cdc4ba]">
+                        KINDA
+                      </h3>
+                      <span className="font-mono text-[10px] text-[#cdc4ba]/40 border border-[#cdc4ba]/15 px-1.5 py-0.5">
+                        UNCERTAIN
+                      </span>
+                    </div>
+                    <p className="font-mono text-xs text-[#cdc4ba]/40 mt-0.5">
+                      Slightly shaky · need an example or brief recap
+                    </p>
+                  </div>
+                </div>
+                <HelpCircle className="h-5 w-5 text-[#cdc4ba]/30 group-hover:text-[#cdc4ba]/70 transition-colors shrink-0" />
+              </button>
+
+              {/* Button 3: LOST (Hold to confirm transmission) */}
+              <div className="relative w-full">
+                <button
+                  type="button"
+                  disabled={cooldownRemaining > 0}
+                  onPointerDown={handlePointerDown}
+                  onPointerUp={handlePointerUp}
+                  onPointerLeave={handlePointerLeave}
+                  onPointerCancel={handlePointerCancel}
+                  className={`w-full relative overflow-hidden border p-5 text-left transition-all select-none touch-none cursor-pointer flex items-center justify-between ${
+                    cooldownRemaining > 0
+                      ? 'border-[#cdc4ba]/10 bg-[#0d0d0d] opacity-30 pointer-events-none'
+                      : isHolding
+                        ? 'border-[#cdc4ba] bg-[#cdc4ba]/10'
+                        : 'border-[#cdc4ba]/30 hover:border-[#cdc4ba]/70 hover:bg-[#cdc4ba]/5 bg-[#0d0d0d]'
+                  }`}
+                  style={{ WebkitTouchCallout: 'none', userSelect: 'none' }}
+                >
+                  {/* Progress Fill Indicator */}
+                  <div
+                    className="absolute left-0 top-0 bottom-0 bg-[#cdc4ba]/15 transition-all duration-75 pointer-events-none"
+                    style={{ width: `${holdProgress}%` }}
+                  />
+
+                  <div className="flex items-center gap-4 relative z-10">
+                    <div
+                      className={`h-10 w-10 border flex items-center justify-center shrink-0 font-mono text-xs transition-colors ${
+                        isHolding
+                          ? 'border-[#cdc4ba] text-[#cdc4ba] bg-[#cdc4ba]/10'
+                          : 'border-[#cdc4ba]/20 text-[#cdc4ba]/60'
+                      }`}
+                    >
+                      03
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h3 className="font-mono text-lg font-semibold tracking-wider text-[#cdc4ba]">
+                          LOST
+                        </h3>
+                        <span
+                          className={`font-mono text-[10px] border px-1.5 py-0.5 transition-colors ${
+                            isHolding
+                              ? 'border-[#cdc4ba] text-[#cdc4ba] bg-[#cdc4ba]/20'
+                              : 'border-[#cdc4ba]/20 text-[#cdc4ba]/50'
+                          }`}
+                        >
+                          {isHolding ? 'HOLDING...' : 'HOLD 1.2S'}
+                        </span>
+                      </div>
+                      <p className="font-mono text-xs text-[#cdc4ba]/40 mt-0.5">
+                        {isHolding
+                          ? 'Keep holding to transmit signal...'
+                          : 'Struggling with concept · press & hold to transmit'}
+                      </p>
                     </div>
                   </div>
-                </div>
 
-                {/* Circular SVG Progress Ring */}
-                <div className="relative h-14 w-14 flex items-center justify-center z-10">
-                  <svg className="h-14 w-14 -rotate-90 transform" viewBox="0 0 80 80">
-                    {/* Background track circle */}
-                    <circle
-                      cx="40"
-                      cy="40"
-                      r={circleRadius}
-                      className="stroke-rose-800/80"
-                      strokeWidth="6"
-                      fill="transparent"
-                    />
-                    {/* Filling progress circle (clockwise) */}
-                    <circle
-                      cx="40"
-                      cy="40"
-                      r={circleRadius}
-                      className="stroke-white transition-all duration-75 ease-linear"
-                      strokeWidth="6"
-                      strokeDasharray={circumference}
-                      strokeDashoffset={strokeDashoffset}
-                      strokeLinecap="round"
-                      fill="transparent"
-                    />
-                  </svg>
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    {holdProgress > 0 ? (
-                      <span className="font-mono text-[11px] font-black text-white">
-                        {Math.round(holdProgress)}%
-                      </span>
-                    ) : (
-                      <AlertTriangle className="h-5 w-5 text-rose-200 opacity-80" />
-                    )}
+                  {/* Circular SVG Progress Ring */}
+                  <div className="relative h-12 w-12 flex items-center justify-center shrink-0 z-10">
+                    <svg className="h-12 w-12 -rotate-90 transform" viewBox="0 0 80 80">
+                      {/* Track */}
+                      <circle
+                        cx="40"
+                        cy="40"
+                        r={circleRadius}
+                        className="stroke-[#cdc4ba]/15"
+                        strokeWidth="5"
+                        fill="transparent"
+                      />
+                      {/* Progress */}
+                      <circle
+                        cx="40"
+                        cy="40"
+                        r={circleRadius}
+                        className="stroke-[#cdc4ba] transition-all duration-75 ease-linear"
+                        strokeWidth="5"
+                        strokeDasharray={circumference}
+                        strokeDashoffset={strokeDashoffset}
+                        strokeLinecap="square"
+                        fill="transparent"
+                      />
+                    </svg>
+                    <div className="absolute inset-0 flex items-center justify-center font-mono text-[10px] font-bold text-[#cdc4ba]">
+                      {holdProgress > 0 ? (
+                        `${Math.round(holdProgress)}%`
+                      ) : (
+                        <AlertTriangle className="h-4 w-4 text-[#cdc4ba]/40" />
+                      )}
+                    </div>
                   </div>
-                </div>
-              </button>
+                </button>
+              </div>
             </div>
-          </div>
+
+            {/* Protocol Explanation Note */}
+            <div className="border border-[#cdc4ba]/10 p-4 font-mono text-[11px] text-[#cdc4ba]/40 flex items-start gap-3">
+              <span className="border border-[#cdc4ba]/20 px-1.5 py-0.5 text-[10px] text-[#cdc4ba]/50 shrink-0">
+                INFO
+              </span>
+              <span className="leading-relaxed">
+                Signals are aggregated into a 60-second rolling telemetry window. A confusion spike (≥50%) prompts the instructor with auto-generated pedagogical analogies.
+              </span>
+            </div>
+          </section>
         )}
       </main>
 
-      {/* Footer */}
-      <footer className="p-4 text-center text-slate-600 text-[11px]">
-        ClassPulse • Student Response Terminal
+      {/* ── Footer ─────────────────────────────────────────── */}
+      <footer className="border-t border-[#cdc4ba]/10 px-6 sm:px-10 py-4 flex items-center justify-between">
+        <span className="font-mono text-[10px] text-[#cdc4ba]/30 tracking-wider">
+          CLASSPULSE // STUDENT TERMINAL
+        </span>
+        {roomId && (
+          <span className="font-mono text-[10px] text-[#cdc4ba]/30">
+            SESSION {roomId}
+          </span>
+        )}
       </footer>
     </div>
   );

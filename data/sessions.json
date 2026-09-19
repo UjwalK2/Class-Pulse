@@ -3223,6 +3223,18 @@
           "answeredAtMs": 1789799683078
         }
       ]
+    },
+    "sess_244i0b": {
+      "id": "sess_244i0b",
+      "createdAt": "2026-09-19T18:06:48.203Z",
+      "currentTopic": "",
+      "status": "active",
+      "endedAt": null,
+      "diagnosticQuestion": null,
+      "optionA": null,
+      "optionB": null,
+      "signals": [],
+      "diagnosticResponses": []
     }
   }
 }
