@@ -72,7 +72,7 @@ This fork is designed for maximum flexibility, especially during **hackathons, l
 
 ```bash
 # Clone the repo
-git clone https://github.com/hemanth1914-stack/Class-Pulse.git
+git clone https://github.com/UjwalK2/Class-Pulse.git
 cd Class-Pulse
 
 # Install dependencies
